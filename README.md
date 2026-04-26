@@ -1,7 +1,6 @@
 #  OrbitWatch — Real-Time Satellite Tracker
 
 A self-contained, single-file satellite tracker with a 3D interactive globe.
-**No backend required.** Hosted as a static site on GitHub Pages / Vercel.
 
 
 ## Features
@@ -29,7 +28,6 @@ Every Monday the GitHub Action:
 2. Fetches fresh TLE data from [Celestrak](https://celestrak.org) for all 7 groups
 3. Injects the new TLEs into `index.html`
 4. Commits and pushes the updated file
-5. Vercel/GitHub Pages auto-deploys the new version
 
 Satellite **positions** are always live (SGP4 propagation in the browser).
 The **orbital elements** are refreshed weekly so accuracy stays within ~1 km.
