@@ -1,0 +1,45 @@
+name: Refresh TLE Data
+
+on:
+  # Run every Monday at 06:00 UTC
+  schedule:
+    - cron: "0 6 * * 1"
+
+  # Also allow manual trigger from the GitHub Actions tab
+  workflow_dispatch:
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # needed to commit & push index.html
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Fetch fresh TLEs and rebuild index.html
+        run: python scripts/build.py
+
+      - name: Check if index.html changed
+        id: diff
+        run: |
+          git diff --quiet index.html && echo "changed=false" >> $GITHUB_OUTPUT || echo "changed=true" >> $GITHUB_OUTPUT
+
+      - name: Commit and push updated index.html
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add index.html
+          git commit -m "chore: refresh TLE data $(date -u '+%Y-%m-%d')"
+          git push
+
+      - name: No changes detected
+        if: steps.diff.outputs.changed == 'false'
+        run: echo "TLE data unchanged, nothing to commit."

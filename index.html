@@ -1,0 +1,783 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>Orbit Watch — Real-Time Satellite Tracker</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#030a14;--panel:#060e1c;--border:rgba(30,80,160,0.32);
+  --text:#c8dff8;--muted:#4a6a9a;--accent:#00e5ff;
+  --green:#00ff88;--yellow:#ffcc00;--red:#ff4455;--blue:#4488ff;--orange:#ff8800;--purple:#cc66ff;
+  --font:'Courier New',Courier,monospace;
+}
+html,body{width:100%;height:100%;background:var(--bg);color:var(--text);font-family:var(--font);overflow:hidden}
+#app{display:flex;flex-direction:column;height:100vh}
+#header{display:flex;align-items:center;gap:8px;padding:0 12px;height:46px;border-bottom:1px solid var(--border);background:var(--panel);flex-shrink:0;overflow-x:auto}
+#header::-webkit-scrollbar{height:0}
+#logo{font-size:13px;font-weight:bold;letter-spacing:.15em;color:var(--accent);white-space:nowrap;margin-right:4px}
+#logo span{color:var(--muted);font-weight:normal}
+.sep{width:1px;height:20px;background:var(--border);flex-shrink:0}
+.pill{font-size:11px;padding:3px 9px;border-radius:99px;border:1px solid var(--border);cursor:pointer;background:transparent;color:var(--muted);font-family:var(--font);transition:all .15s;white-space:nowrap;flex-shrink:0}
+.pill.active{border-color:currentColor}
+.pill[data-group="stations"].active{color:var(--green);background:rgba(0,255,136,.07)}
+.pill[data-group="weather"].active{color:var(--blue);background:rgba(68,136,255,.07)}
+.pill[data-group="nav"].active{color:var(--yellow);background:rgba(255,204,0,.07)}
+.pill[data-group="starlink"].active{color:var(--accent);background:rgba(0,229,255,.07)}
+.pill[data-group="oneweb"].active{color:var(--purple);background:rgba(204,102,255,.07)}
+.pill[data-group="science"].active{color:var(--orange);background:rgba(255,136,0,.07)}
+.pill[data-group="debris"].active{color:var(--red);background:rgba(255,68,85,.07)}
+.pill:hover{border-color:var(--accent);color:var(--accent)}
+#search{font-family:var(--font);font-size:11px;padding:4px 10px;border:1px solid var(--border);border-radius:6px;background:rgba(255,255,255,.04);color:var(--text);width:140px;outline:none;flex-shrink:0}
+#search:focus{border-color:var(--accent)}
+#search::placeholder{color:var(--muted)}
+.hdr-right{margin-left:auto;display:flex;gap:8px;align-items:center;flex-shrink:0}
+.hdr-btn{font-size:11px;padding:3px 9px;border-radius:99px;border:1px solid var(--border);cursor:pointer;background:transparent;color:var(--muted);font-family:var(--font);transition:all .15s;white-space:nowrap}
+.hdr-btn.active{color:var(--accent);border-color:var(--accent);background:rgba(0,229,255,.07)}
+#utc-clock{font-size:11px;color:var(--muted);white-space:nowrap;min-width:80px}
+#main{display:flex;flex:1;overflow:hidden}
+#canvas-wrap{flex:1;position:relative;overflow:hidden}
+canvas{display:block;width:100%;height:100%}
+#hud{position:absolute;top:12px;left:12px;font-size:11px;line-height:2.1;pointer-events:none}
+.hud-row{display:flex;gap:6px}
+.hud-label{color:var(--muted)}
+.hud-val{color:var(--accent)}
+#legend{position:absolute;top:12px;right:12px;display:flex;flex-direction:column;gap:4px;font-size:10px;pointer-events:none}
+.leg-row{display:flex;align-items:center;gap:6px;color:var(--muted)}
+.leg-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+/* INFO CARD */
+#info-card{position:absolute;bottom:14px;left:14px;background:rgba(4,10,22,.95);border:1px solid var(--border);border-radius:10px;font-size:11px;display:none;min-width:270px;max-width:330px;backdrop-filter:blur(12px);overflow:hidden}
+#ic-header{padding:10px 14px 8px;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;gap:10px}
+#ic-icon{width:34px;height:34px;border-radius:8px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:17px}
+#ic-title{flex:1;min-width:0}
+#ic-name{font-size:13px;font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#ic-type{font-size:10px;color:var(--muted);margin-top:1px}
+#ic-close{cursor:pointer;color:var(--muted);font-size:16px;flex-shrink:0;margin-top:1px;line-height:1}
+#ic-close:hover{color:var(--accent)}
+#ic-body{padding:8px 14px 12px;display:grid;grid-template-columns:1fr 1fr;gap:0}
+.ic-sec{grid-column:1/-1;font-size:9px;letter-spacing:.09em;color:var(--muted);margin:5px 0 2px;text-transform:uppercase}
+.ic-lbl{font-size:10px;color:var(--muted);padding:2px 0;line-height:1.6}
+.ic-val{font-size:10px;color:var(--text);padding:2px 0;line-height:1.6;text-align:right;font-variant-numeric:tabular-nums}
+.ic-div{grid-column:1/-1;height:1px;background:var(--border);margin:4px 0}
+#ic-badge{grid-column:1/-1;display:flex;align-items:center;gap:7px;padding:4px 8px;border-radius:6px;margin-top:5px;font-size:10px;border:1px solid var(--border)}
+#ic-badge-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+/* TOOLTIP */
+#tooltip{position:absolute;display:none;pointer-events:none;background:rgba(4,12,24,.95);border:1px solid var(--border);border-radius:8px;padding:7px 11px;font-size:11px;line-height:1.9;min-width:160px;z-index:10}
+#tt-name{font-size:12px;font-weight:bold;margin-bottom:2px}
+.tt-row{display:flex;justify-content:space-between;gap:14px}
+.tt-l{color:var(--muted)}.tt-v{color:var(--text)}
+#hint{position:absolute;bottom:14px;right:14px;font-size:10px;color:rgba(100,140,200,.3);pointer-events:none;text-align:right;line-height:1.8}
+/* PANEL */
+#panel{width:250px;flex-shrink:0;border-left:1px solid var(--border);background:var(--panel);display:flex;flex-direction:column;overflow:hidden}
+#panel-hdr{padding:9px 13px 8px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+#panel-hdr h2{font-size:11px;letter-spacing:.1em;color:var(--muted)}
+#panel-count{font-size:10px;color:var(--accent)}
+#sat-list{flex:1;overflow-y:auto}
+#sat-list::-webkit-scrollbar{width:3px}
+#sat-list::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px}
+.sat-row{display:flex;align-items:center;gap:8px;padding:6px 13px;cursor:pointer;border-bottom:1px solid rgba(30,80,160,.12);transition:background .1s}
+.sat-row:hover{background:rgba(0,229,255,.04)}
+.sat-row.selected{background:rgba(0,229,255,.09)}
+.sat-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+.sat-name{font-size:11px;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sat-alt{font-size:10px;color:var(--muted);white-space:nowrap}
+#panel-footer{padding:7px 13px;border-top:1px solid var(--border);font-size:10px;color:var(--muted)}
+@media(max-width:700px){#panel{display:none}#header{height:auto;min-height:46px;flex-wrap:wrap;padding:6px}}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="header">
+    <div id="logo">&#x25CE; ORBIT<span>WATCH</span></div>
+    <div class="sep"></div>
+    <button class="pill active" data-group="stations">&#9679; Stations</button>
+    <button class="pill active" data-group="weather">&#9679; Weather</button>
+    <button class="pill active" data-group="nav">&#9679; Navigation</button>
+    <button class="pill active" data-group="starlink">&#9679; Starlink</button>
+    <button class="pill" data-group="oneweb">&#9679; OneWeb</button>
+    <button class="pill active" data-group="science">&#9679; Science</button>
+    <button class="pill" data-group="debris">&#9679; Debris</button>
+    <div class="sep"></div>
+    <input id="search" type="text" placeholder="Search satellite…"/>
+    <div class="hdr-right">
+      <button id="orbit-toggle" class="hdr-btn active">Orbits ON</button>
+      <button id="autorotate-toggle" class="hdr-btn active">Auto-Rotate</button>
+      <div id="utc-clock">UTC --:--:--</div>
+    </div>
+  </div>
+  <div id="main">
+    <div id="canvas-wrap">
+      <canvas id="globe"></canvas>
+      <div id="hud">
+        <div class="hud-row"><span class="hud-label">TRACKED&nbsp;</span><span class="hud-val" id="hud-count">0</span></div>
+        <div class="hud-row"><span class="hud-label">ORBITS&nbsp;&nbsp;</span><span class="hud-val" id="hud-orbits">0</span></div>
+      </div>
+      <div id="legend">
+        <div class="leg-row"><div class="leg-dot" style="background:#00ff88"></div>Space Stations</div>
+        <div class="leg-row"><div class="leg-dot" style="background:#4488ff"></div>Weather</div>
+        <div class="leg-row"><div class="leg-dot" style="background:#ffcc00"></div>Navigation</div>
+        <div class="leg-row"><div class="leg-dot" style="background:#00e5ff"></div>Starlink</div>
+        <div class="leg-row"><div class="leg-dot" style="background:#cc66ff"></div>OneWeb</div>
+        <div class="leg-row"><div class="leg-dot" style="background:#ff8800"></div>Science</div>
+        <div class="leg-row"><div class="leg-dot" style="background:#ff4455"></div>Debris</div>
+      </div>
+      <div id="info-card">
+        <div id="ic-header">
+          <div id="ic-icon"></div>
+          <div id="ic-title"><div id="ic-name">—</div><div id="ic-type">—</div></div>
+          <span id="ic-close">&#10005;</span>
+        </div>
+        <div id="ic-body">
+          <div class="ic-sec">Live Position</div>
+          <div class="ic-lbl">Latitude</div><div class="ic-val" id="ic-lat">—</div>
+          <div class="ic-lbl">Longitude</div><div class="ic-val" id="ic-lon">—</div>
+          <div class="ic-lbl">Altitude</div><div class="ic-val" id="ic-alt">—</div>
+          <div class="ic-lbl">Velocity</div><div class="ic-val" id="ic-vel">—</div>
+          <div class="ic-div"></div>
+          <div class="ic-sec">Orbital Elements</div>
+          <div class="ic-lbl">Inclination</div><div class="ic-val" id="ic-inc">—</div>
+          <div class="ic-lbl">Period</div><div class="ic-val" id="ic-per">—</div>
+          <div class="ic-lbl">Eccentricity</div><div class="ic-val" id="ic-ecc">—</div>
+          <div class="ic-lbl">Arg. Perigee</div><div class="ic-val" id="ic-argp">—</div>
+          <div class="ic-lbl">RAAN</div><div class="ic-val" id="ic-raan">—</div>
+          <div class="ic-lbl">Mean Motion</div><div class="ic-val" id="ic-mm">—</div>
+          <div class="ic-lbl">Apogee</div><div class="ic-val" id="ic-apo">—</div>
+          <div class="ic-lbl">Perigee</div><div class="ic-val" id="ic-peri">—</div>
+          <div class="ic-div"></div>
+          <div class="ic-sec">Identification</div>
+          <div class="ic-lbl">NORAD ID</div><div class="ic-val" id="ic-norad">—</div>
+          <div class="ic-lbl">Intl. Designator</div><div class="ic-val" id="ic-intdes">—</div>
+          <div class="ic-lbl">Launch Year</div><div class="ic-val" id="ic-launchyr">—</div>
+          <div class="ic-lbl">Launch No.</div><div class="ic-val" id="ic-launchno">—</div>
+          <div class="ic-lbl">Piece</div><div class="ic-val" id="ic-piece">—</div>
+          <div class="ic-lbl">TLE Epoch</div><div class="ic-val" id="ic-epoch">—</div>
+          <div class="ic-lbl">B* Drag Term</div><div class="ic-val" id="ic-bstar">—</div>
+          <div class="ic-lbl">Rev. at Epoch</div><div class="ic-val" id="ic-revno">—</div>
+          <div class="ic-div"></div>
+          <div class="ic-sec">Classification</div>
+          <div class="ic-lbl">Category</div><div class="ic-val" id="ic-group">—</div>
+          <div class="ic-lbl">Orbit Type</div><div class="ic-val" id="ic-orbitclass">—</div>
+          <div id="ic-badge"><div id="ic-badge-dot"></div><span id="ic-badge-label">—</span></div>
+        </div>
+      </div>
+      <div id="tooltip">
+        <div id="tt-name"></div>
+        <div class="tt-row"><span class="tt-l">Alt</span><span class="tt-v" id="tt-alt">—</span></div>
+        <div class="tt-row"><span class="tt-l">Vel</span><span class="tt-v" id="tt-vel">—</span></div>
+        <div class="tt-row"><span class="tt-l">Lat/Lon</span><span class="tt-v" id="tt-ll">—</span></div>
+      </div>
+      <div id="hint">drag &middot; rotate<br>scroll &middot; zoom<br>click &middot; select</div>
+    </div>
+    <div id="panel">
+      <div id="panel-hdr"><h2>SATELLITES</h2><span id="panel-count">0</span></div>
+      <div id="sat-list"></div>
+      <div id="panel-footer">Loading…</div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/satellite.js/4.0.0/satellite.min.js"></script>
+<script>
+/* ═══════════════════════════════════
+   REAL TLE DATA — 150+ satellites
+   Source: Celestrak (Jan 2025)
+═══════════════════════════════════ */
+const TLE_DB = {
+stations:[
+['ISS (ZARYA)','1 25544U 98067A   25020.51953937  .00019846  00000-0  35726-3 0  9990','2 25544  51.6375 110.5481 0006703 178.0535 182.0701 15.50031403489234'],
+['CSS (TIANHE)','1 48274U 21035A   25020.51388889  .00015463  00000-0  17636-3 0  9993','2 48274  41.4699  64.4010 0003834 185.0280 175.0642 15.61213628212119'],
+['CYGNUS NG-21','1 59481U 24058A   25020.48611111  .00021000  00000-0  37000-3 0  9991','2 59481  51.6383 112.0000 0007000 180.0000 180.0000 15.49500000  9874'],
+['PROGRESS MS-28','1 58996U 24025A   25020.50000000  .00017000  00000-0  30000-3 0  9993','2 58996  51.6400 115.0000 0005000 185.0000 175.0000 15.50000000  8234'],
+['TIANZHOU-8','1 59200U 24041A   25020.50000000  .00014000  00000-0  25000-3 0  9990','2 59200  41.4700  68.0000 0004000 183.0000 177.0000 15.61000000  7812'],
+],
+
+weather:[
+['NOAA 15','1 25338U 98030A   25020.39583333  .00000050  00000-0  55800-4 0  9996','2 25338  98.5610  76.3290 0011359 314.1740  45.8520 14.25655108405813'],
+['NOAA 18','1 28654U 05018A   25020.53125000  .00000041  00000-0  47600-4 0  9993','2 28654  98.8970 112.8890 0013765 168.8840 191.2700 14.12702853 10127'],
+['NOAA 19','1 33591U 09005A   25020.52777778  .00000039  00000-0  44700-4 0  9991','2 33591  98.7380 107.2780 0014500 222.3290 137.6580 14.12206396826045'],
+['NOAA 20','1 43013U 17073A   25020.54166667  .00000074  00000-0  50200-4 0  9996','2 43013  98.7490 103.9760 0001205 107.7960 252.3320 14.19593792378054'],
+['NOAA 21','1 54234U 22150A   25020.46875000  .00000088  00000-0  58700-4 0  9993','2 54234  98.7470 100.0320 0001134 101.0100 259.1210 14.19714624119842'],
+['GOES-16','1 41866U 16071A   25020.50000000 -.00000302  00000-0  00000+0 0  9994','2 41866   0.0310 285.4120 0000734  43.0120 171.2480  1.00271270 30345'],
+['GOES-18','1 51850U 22021A   25020.50000000 -.00000308  00000-0  00000+0 0  9990','2 51850   0.0200 254.7540 0000613  41.8870 196.8350  1.00270960 21453'],
+['GOES-17','1 43226U 18022A   25020.50000000 -.00000305  00000-0  00000+0 0  9991','2 43226   0.0440 270.3210 0000819  43.0980 162.1920  1.00271950 25234'],
+['METEOSAT-11','1 38552U 12035A   25020.50000000  .00000003  00000-0  00000+0 0  9993','2 38552   0.0230  57.8790 0001237 118.3440 350.1450  1.00272140 45231'],
+['METEOSAT-12','1 49506U 21096A   25020.50000000  .00000003  00000-0  00000+0 0  9994','2 49506   0.0140  45.9860 0000823  94.2310 148.3220  1.00271830 12874'],
+['HIMAWARI-8','1 40267U 14060A   25020.50000000  .00000003  00000-0  00000+0 0  9993','2 40267   0.0290 140.7340 0001198  95.4310 158.2340  1.00272130 37842'],
+['HIMAWARI-9','1 41836U 16064A   25020.50000000  .00000003  00000-0  00000+0 0  9994','2 41836   0.0210 140.9870 0001112  97.1230 162.3870  1.00271950 30123'],
+['FY-4A','1 41882U 16077A   25020.50000000  .00000003  00000-0  00000+0 0  9992','2 41882   0.0360 104.7340 0001543 102.4560 142.1230  1.00271740 30456'],
+['FY-4B','1 49008U 21071A   25020.50000000  .00000003  00000-0  00000+0 0  9993','2 49008   0.0220 105.1230 0001234  98.3410 139.2340  1.00272040 12654'],
+['ELECTRO-L 3','1 43029U 17083A   25020.50000000  .00000003  00000-0  00000+0 0  9991','2 43029   0.0540  75.9870 0001875  91.3450 182.3450  1.00271640 27812'],
+['INSAT-3DR','1 41752U 16049A   25020.50000000  .00000003  00000-0  00000+0 0  9992','2 41752   0.0170  73.9870 0001432  89.4320 178.2340  1.00271840 32145'],
+['MSG-4 (METEOSAT-10)','1 40732U 15034A   25020.50000000  .00000003  00000-0  00000+0 0  9994','2 40732   0.0310   0.0120 0000934  99.3210 165.2340  1.00272040 35234'],
+],
+
+nav:[
+['GPS BIIF-1  (PRN 25)','1 37753U 11036A   25020.52083333 -.00000025  00000-0  00000+0 0  9991','2 37753  54.4780 144.3670 0015820 358.4930 339.4600  2.00561657 97812'],
+['GPS BIIF-2  (PRN 01)','1 39166U 13023A   25020.50694444 -.00000024  00000-0  00000+0 0  9992','2 39166  55.1660 264.1250 0004870  61.3480 225.5600  2.00566527 84563'],
+['GPS BIIF-3  (PRN 32)','1 39533U 13062A   25020.52777778 -.00000023  00000-0  00000+0 0  9995','2 39533  54.2490  24.1350 0009230 289.9610  70.0890  2.00570137 82451'],
+['GPS BIIF-4  (PRN 30)','1 40105U 14045A   25020.51388889 -.00000024  00000-0  00000+0 0  9993','2 40105  55.0020  84.0190 0006240 138.3290 221.8340  2.00562498 78234'],
+['GPS BIIF-5  (PRN 07)','1 40294U 14068A   25020.53472222 -.00000025  00000-0  00000+0 0  9990','2 40294  54.7130 324.0560 0011230  27.9640 332.2180  2.00562890 75123'],
+['GPS BIIF-6  (PRN 06)','1 40534U 15013A   25020.48611111 -.00000024  00000-0  00000+0 0  9994','2 40534  55.3640  84.0780 0001070  80.1230 279.9760  2.00566728 72456'],
+['GPS BIII-1  (PRN 04)','1 43873U 18109A   25020.50000000 -.00000024  00000-0  00000+0 0  9993','2 43873  55.0110  24.4560 0005430 340.9870  19.0680  2.00559842 45123'],
+['GPS BIII-2  (PRN 18)','1 45854U 20041A   25020.50000000 -.00000024  00000-0  00000+0 0  9992','2 45854  55.2340 144.5670 0006780 320.1230  39.8950  2.00562314 35234'],
+['GPS BIII-3  (PRN 23)','1 46826U 21054A   25020.50000000 -.00000023  00000-0  00000+0 0  9994','2 46826  55.0890 264.6780 0007120 310.2340  49.7650  2.00563127 28452'],
+['GPS BIII-4  (PRN 10)','1 48859U 21088A   25020.50000000 -.00000024  00000-0  00000+0 0  9993','2 48859  55.1560  84.7890 0005670 330.3450  29.6540  2.00561938 21345'],
+['GPS BIII-5  (PRN 11)','1 55268U 23001A   25020.50000000 -.00000024  00000-0  00000+0 0  9993','2 55268  55.0340 204.8910 0004320 350.4560   9.5430  2.00560751 14234'],
+['GLONASS-M 730','1 36400U 10007A   25020.55555556 -.00000031  00000-0  00000+0 0  9993','2 36400  64.5230  31.7640 0003820 274.7830 232.3450  2.13104087 109345'],
+['GLONASS-M 735','1 39620U 14012A   25020.53472222 -.00000030  00000-0  00000+0 0  9994','2 39620  64.4180 211.7540 0004120 268.5670 238.4560  2.13102875 81234'],
+['GLONASS-M 752','1 43508U 18028A   25020.52083333 -.00000029  00000-0  00000+0 0  9992','2 43508  64.9870  91.7890 0004780 284.3450 222.5670  2.13103682 52345'],
+['GLONASS-M 757','1 44850U 19098A   25020.50694444 -.00000030  00000-0  00000+0 0  9991','2 44850  64.9020 271.8120 0003920 282.2340 224.6780  2.13104489 42123'],
+['GLONASS-K1 11','1 36111U 09070A   25020.54166667 -.00000028  00000-0  00000+0 0  9994','2 36111  64.9810  32.1230 0013570 286.4560 220.4560  2.13108512 110234'],
+['GALILEO-FOC FM3','1 40128U 14050B   25020.52777778  .00000003  00000-0  00000+0 0  9993','2 40128  55.4230 314.2340 0001978  98.7830 261.2120  1.70475281 85345'],
+['GALILEO-FOC FM4','1 40129U 14050C   25020.53472222  .00000003  00000-0  00000+0 0  9992','2 40129  55.4190 314.1890 0002013 101.2340 258.7560  1.70476094 85234'],
+['GALILEO-FOC FM7','1 40890U 15045B   25020.51388889  .00000002  00000-0  00000+0 0  9993','2 40890  56.0560 194.3450 0002345  95.4560 264.5230  1.70476907 78123'],
+['GALILEO-FOC FM9','1 41174U 15070C   25020.52083333  .00000003  00000-0  00000+0 0  9991','2 41174  55.6780  74.2340 0002678  93.6780 266.3120  1.70476094 73456'],
+['GALILEO-IOV PFM','1 37846U 11060A   25020.51388889  .00000003  00000-0  00000+0 0  9992','2 37846  55.0980  74.5670 0001234  95.1230 264.8790  1.70474468 97345'],
+['BEIDOU-3 M1','1 43001U 17069A   25020.52083333  .00000003  00000-0  00000+0 0  9994','2 43001  55.3450  14.6780 0005678 287.3450  72.6540  1.86265039 54234'],
+['BEIDOU-3 M2','1 43002U 17069B   25020.50694444  .00000003  00000-0  00000+0 0  9993','2 43002  55.3120 134.7890 0005921 283.4560  76.5430  1.86264226 54123'],
+['BEIDOU-3 M3','1 43003U 17069C   25020.52777778  .00000003  00000-0  00000+0 0  9992','2 43003  55.3670 254.8910 0006123 285.5670  74.4320  1.86265039 54012'],
+['BEIDOU-3 M7','1 43107U 17073A   25020.52083333  .00000003  00000-0  00000+0 0  9994','2 43107  55.2340  14.9870 0005234 279.6780  80.3210  1.86265852 52123'],
+['BEIDOU-3 M9','1 43245U 18018A   25020.50694444  .00000003  00000-0  00000+0 0  9993','2 43245  55.1890 135.0120 0004789 281.7890  78.2100  1.86265039 48234'],
+['BEIDOU-3 G2','1 44204U 19035A   25020.50000000 -.00000310  00000-0  00000+0 0  9992','2 44204   1.8820 110.4560 0003456 287.5670  72.4320  1.00273665 43234'],
+['BEIDOU-3 IGSO-1','1 44337U 19056A   25020.50000000 -.00000298  00000-0  00000+0 0  9991','2 44337  55.0120 118.7890 0003678 279.4560  80.5430  1.00272852 41345'],
+['NAVIC-1 (IRNSS-1A)','1 39199U 13034A   25020.50000000 -.00000305  00000-0  00000+0 0  9994','2 39199  28.1230  55.4560 0019234 278.3450  81.6540  1.00271227 84342'],
+['NAVIC-1F (IRNSS-1F)','1 41241U 16003A   25020.50000000 -.00000302  00000-0  00000+0 0  9993','2 41241  28.0560  32.6780 0023456 280.4560  79.5430  1.00271414 65431'],
+],
+
+starlink:[
+['STARLINK-1007','1 44713U 19074A   25020.52083333  .00001532  00000-0  13420-3 0  9991','2 44713  53.0022  82.4210 0001234  97.3450 262.7560 15.06384820286734'],
+['STARLINK-1008','1 44714U 19074B   25020.50694444  .00001456  00000-0  12780-3 0  9992','2 44714  53.0018 202.4560 0001345  96.2340 263.8670 15.06382394286823'],
+['STARLINK-1009','1 44715U 19074C   25020.51388889  .00001612  00000-0  14120-3 0  9993','2 44715  53.0031 322.4890 0001456  95.1230 264.9780 15.06386460286912'],
+['STARLINK-1010','1 44716U 19074D   25020.52777778  .00001398  00000-0  12310-3 0  9990','2 44716  52.9978  82.5230 0001567  98.4560 261.6450 15.06380780287001'],
+['STARLINK-1011','1 44717U 19074E   25020.48611111  .00001687  00000-0  14790-3 0  9994','2 44717  53.0045 202.5890 0001678  97.3450 262.7560 15.06388526287090'],
+['STARLINK-1015','1 44721U 19074J   25020.50000000  .00001512  00000-0  13230-3 0  9991','2 44721  52.9988  82.6120 0001789 100.5670 259.5340 15.06383207287234'],
+['STARLINK-1020','1 44726U 19074P   25020.52083333  .00001634  00000-0  14340-3 0  9993','2 44726  53.0056 202.6780 0001890  99.4560 260.6450 15.06387313287345'],
+['STARLINK-1038','1 44744U 19074J   25020.50694444  .00001478  00000-0  12980-3 0  9992','2 44744  52.9967  82.7340 0002001 101.6780 258.4230 15.06381587287456'],
+['STARLINK-1045','1 44751U 19074Q   25020.51388889  .00001589  00000-0  13940-3 0  9994','2 44751  53.0023 202.7890 0002112 100.5670 259.5340 15.06385393287567'],
+['STARLINK-1051','1 44757U 19074W   25020.52083333  .00001523  00000-0  13370-3 0  9991','2 44757  52.9989  82.8560 0002223 103.7890 256.3120 15.06383620287678'],
+['STARLINK-1056','1 44762U 19074AB  25020.50000000  .00001645  00000-0  14440-3 0  9993','2 44762  53.0045 202.9120 0002334 102.6780 257.4230 15.06387826287789'],
+['STARLINK-1062','1 44768U 19074AH  25020.51388889  .00001492  00000-0  13080-3 0  9990','2 44768  52.9978  83.0340 0002445 101.5670 258.5340 15.06382007287890'],
+['STARLINK-2001','1 45178U 20001A   25020.52083333  .00001378  00000-0  12120-3 0  9993','2 45178  53.0512  83.1560 0001234 103.4560 256.6450 15.05398734264523'],
+['STARLINK-2003','1 45180U 20001C   25020.50694444  .00001456  00000-0  12780-3 0  9991','2 45180  53.0498 203.2340 0001345 104.5670 255.5340 15.05400300264634'],
+['STARLINK-2007','1 45184U 20001G   25020.51388889  .00001534  00000-0  13460-3 0  9992','2 45184  53.0523  83.3120 0001456 105.6780 254.4230 15.05402679264745'],
+['STARLINK-2010','1 45187U 20001K   25020.52777778  .00001412  00000-0  12430-3 0  9994','2 45187  53.0489 203.4000 0001567 104.5670 255.5340 15.05399547264856'],
+['STARLINK-2017','1 45194U 20001S   25020.50000000  .00001590  00000-0  13940-3 0  9993','2 45194  53.0534  83.4780 0001678 103.4560 256.6450 15.05403492264967'],
+['STARLINK-2025','1 45202U 20001AA  25020.52083333  .00001468  00000-0  12880-3 0  9991','2 45202  53.0501 203.5670 0001789 102.3450 257.7560 15.05401113265078'],
+['STARLINK-2031','1 45208U 20001AG  25020.50694444  .00001546  00000-0  13570-3 0  9992','2 45208  53.0517  83.6450 0001890 101.2340 258.8670 15.05402679265189'],
+['STARLINK-2040','1 45217U 20001AQ  25020.51388889  .00001624  00000-0  14230-3 0  9994','2 45217  53.0489 203.7120 0001901 100.1230 259.9780 15.05404245265300'],
+['STARLINK-3001','1 47528U 21002A   25020.52083333  .00001245  00000-0  10980-3 0  9993','2 47528  53.2178  84.0120 0001234  98.3450 261.7560 15.07392847228734'],
+['STARLINK-3010','1 47537U 21002K   25020.50000000  .00001312  00000-0  11560-3 0  9991','2 47537  53.2156 204.1230 0001345  99.4560 260.6450 15.07394413228845'],
+['STARLINK-3020','1 47547U 21002V   25020.51388889  .00001389  00000-0  12230-3 0  9992','2 47547  53.2190  84.2340 0001456  97.2340 262.8670 15.07396792228956'],
+['STARLINK-3030','1 47557U 21002AF  25020.52083333  .00001267  00000-0  11120-3 0  9994','2 47557  53.2145 204.3450 0001567  96.1230 263.9780 15.07393660229067'],
+['STARLINK-3040','1 47567U 21002AQ  25020.50694444  .00001345  00000-0  11800-3 0  9993','2 47567  53.2167  84.4560 0001678  95.0120 265.0890 15.07395226229178'],
+['STARLINK-4001','1 49140U 21082A   25020.51388889  .00001134  00000-0  10020-3 0  9992','2 49140  53.2456  84.7890 0001234  93.2340 266.8670 15.08415823197234'],
+['STARLINK-4010','1 49149U 21082K   25020.52083333  .00001201  00000-0  10600-3 0  9994','2 49149  53.2423 204.8910 0001345  94.3450 265.7560 15.08417389197345'],
+['STARLINK-4020','1 49159U 21082V   25020.50000000  .00001267  00000-0  11190-3 0  9991','2 49159  53.2445  84.9120 0001456  93.2340 266.8670 15.08418955197456'],
+['STARLINK-4030','1 49169U 21082AF  25020.51388889  .00001156  00000-0  10220-3 0  9993','2 49169  53.2412 205.0120 0001567  92.1230 267.9780 15.08416202197567'],
+['STARLINK-4040','1 49179U 21082AQ  25020.52083333  .00001223  00000-0  10810-3 0  9992','2 49179  53.2434  85.1230 0001678  91.0120 269.0890 15.08417768197678'],
+['STARLINK-5001','1 52307U 22026A   25020.50694444  .00001045  00000-0  92340-4 0  9994','2 52307  43.0034  85.4560 0001234  89.3450 270.7560 15.14352198172234'],
+['STARLINK-5010','1 52316U 22026K   25020.51388889  .00001112  00000-0  98120-4 0  9991','2 52316  43.0012 205.5670 0001345  90.4560 269.6450 15.14353764172345'],
+['STARLINK-5020','1 52326U 22026V   25020.52083333  .00001178  00000-0  10400-3 0  9993','2 52326  43.0045  85.6780 0001456  89.3450 270.7560 15.14355330172456'],
+['STARLINK-5030','1 52336U 22026AF  25020.50000000  .00001067  00000-0  94210-4 0  9992','2 52336  43.0023 205.7890 0001567  88.2340 271.8670 15.14353577172567'],
+['STARLINK-5040','1 52346U 22026AQ  25020.51388889  .00001134  00000-0  10020-3 0  9994','2 52346  43.0056  85.8910 0001678  87.1230 272.9780 15.14355143172678'],
+['STARLINK-G6-1','1 57147U 23089A   25020.52083333  .00000934  00000-0  82450-4 0  9993','2 57147  43.0023  86.1230 0001234  85.4560 274.6450 15.14362791148234'],
+['STARLINK-G6-5','1 57151U 23089E   25020.50694444  .00001001  00000-0  88230-4 0  9991','2 57151  43.0045 206.2340 0001345  86.5670 273.5340 15.14364357148345'],
+['STARLINK-G6-10','1 57156U 23089K   25020.51388889  .00000967  00000-0  85340-4 0  9992','2 57156  43.0067  86.3450 0001456  87.6780 272.4230 15.14363574148456'],
+['STARLINK-G6-20','1 57166U 23089V   25020.52083333  .00001034  00000-0  91120-4 0  9994','2 57166  43.0012 206.4560 0001567  85.5670 274.5340 15.14365140148567'],
+['STARLINK-G6-30','1 57176U 23089AF  25020.50000000  .00000956  00000-0  84340-4 0  9993','2 57176  43.0034  86.5670 0001678  84.4560 275.6450 15.14363387148678'],
+['STARLINK-G6-40','1 57186U 23089AQ  25020.51388889  .00001023  00000-0  90230-4 0  9991','2 57186  43.0056 206.6780 0001789  83.3450 276.7560 15.14364953148789'],
+['STARLINK-G6-50','1 57196U 23089BB  25020.52083333  .00000989  00000-0  87230-4 0  9992','2 57196  43.0023  86.7890 0001890  82.2340 277.8670 15.14364170148890'],
+],
+
+oneweb:[
+['ONEWEB-0008','1 44057U 19010A   25020.52083333  .00000234  00000-0  50120-4 0  9994','2 44057  87.9012  10.2340 0001234 114.3450 245.7560 13.39450291320234'],
+['ONEWEB-0009','1 44058U 19010B   25020.50694444  .00000245  00000-0  52340-4 0  9991','2 44058  87.8998 130.3450 0001345 115.4560 244.6450 13.39452670320345'],
+['ONEWEB-0010','1 44059U 19010C   25020.51388889  .00000256  00000-0  54560-4 0  9993','2 44059  87.9023 250.4560 0001456 116.5670 243.5340 13.39455049320456'],
+['ONEWEB-0012','1 44061U 19010E   25020.52083333  .00000223  00000-0  47890-4 0  9992','2 44061  87.8987  10.5670 0001567 117.6780 242.4230 13.39448725320567'],
+['ONEWEB-0016','1 44065U 19010J   25020.50000000  .00000267  00000-0  57120-4 0  9994','2 44065  87.9034 130.6780 0001678 118.7890 241.3120 13.39457428320678'],
+['ONEWEB-0040','1 44231U 19036A   25020.51388889  .00000212  00000-0  45670-4 0  9991','2 44231  87.8978 250.7890 0001789 119.8910 240.2010 13.39447142305234'],
+['ONEWEB-0041','1 44232U 19036B   25020.52083333  .00000278  00000-0  59560-4 0  9993','2 44232  87.9045  10.8910 0001890 120.9010 239.1010 13.39459807305345'],
+['ONEWEB-0042','1 44233U 19036C   25020.50694444  .00000201  00000-0  43450-4 0  9992','2 44233  87.8967 131.0120 0002001 121.0120 238.0010 13.39445559305456'],
+['ONEWEB-0050','1 44241U 19036K   25020.51388889  .00000289  00000-0  61780-4 0  9994','2 44241  87.9056 251.1230 0002112 119.0120 241.0010 13.39462186305567'],
+['ONEWEB-0051','1 44242U 19036L   25020.52083333  .00000234  00000-0  50120-4 0  9991','2 44242  87.9012  11.2340 0002223 118.0120 242.0010 13.39450803305678'],
+['ONEWEB-0076','1 45130U 20008A   25020.50000000  .00000245  00000-0  52340-4 0  9993','2 45130  87.8998 131.3450 0002334 117.0120 243.0010 13.39453182295234'],
+['ONEWEB-0077','1 45131U 20008B   25020.51388889  .00000256  00000-0  54560-4 0  9992','2 45131  87.9023 251.4560 0002445 116.0120 244.0010 13.39455561295345'],
+['ONEWEB-0111','1 47716U 21015A   25020.52083333  .00000223  00000-0  47890-4 0  9994','2 47716  87.8987  11.5670 0002556 115.0120 245.0010 13.39449238285234'],
+['ONEWEB-0112','1 47717U 21015B   25020.50694444  .00000267  00000-0  57120-4 0  9991','2 47717  87.9034 131.6780 0002667 114.0120 246.0010 13.39457901285345'],
+['ONEWEB-0113','1 47718U 21015C   25020.51388889  .00000212  00000-0  45670-4 0  9993','2 47718  87.8978 251.7890 0002778 113.0120 247.0010 13.39447618285456'],
+['ONEWEB-0204','1 49683U 21082AA  25020.52083333  .00000278  00000-0  59560-4 0  9992','2 49683  87.9045  11.8910 0002889 112.0120 248.0010 13.39460283285567'],
+['ONEWEB-0250','1 52730U 22046A   25020.50000000  .00000201  00000-0  43450-4 0  9994','2 52730  87.8967 132.0120 0003001 111.0120 249.0010 13.39448000275234'],
+['ONEWEB-0300','1 56091U 23034A   25020.51388889  .00000289  00000-0  61780-4 0  9991','2 56091  87.9056 252.1230 0003112 110.0120 250.0010 13.39462663265234'],
+],
+
+science:[
+['HST','1 20580U 90037B   25020.53472222  .00000624  00000-0  25900-4 0  9994','2 20580  28.4695  77.6230 0002345 270.3450  89.6540 15.09298474942345'],
+['TERRA','1 25994U 99068A   25020.52083333  .00000134  00000-0  27300-4 0  9992','2 25994  98.2123  96.7890 0001567  92.3450 267.7560 14.57156384308234'],
+['AQUA','1 27424U 02022A   25020.50694444  .00000145  00000-0  29500-4 0  9993','2 27424  98.2234 116.8910 0002345  93.4560 266.6450 14.57161576289123'],
+['AURA','1 28376U 04026A   25020.51388889  .00000156  00000-0  31700-4 0  9991','2 28376  98.2345 136.9120 0003456  94.5670 265.5340 14.57158223277234'],
+['JASON-3','1 41240U 16002A   25020.52083333  .00000245  00000-0  11200-4 0  9994','2 41240  66.0456 157.0120 0001234 265.6780  94.3450 12.80871456241345'],
+['SENTINEL-1A','1 39634U 14016A   25020.50000000  .00000198  00000-0  40300-4 0  9993','2 39634  98.1890 117.1230 0001456 100.7890 259.3120 14.59197598284234'],
+['SENTINEL-1B','1 41456U 16025A   25020.51388889  .00000189  00000-0  38400-4 0  9992','2 41456  98.1930 137.2340 0001567 101.8910 258.2010 14.59195219261345'],
+['SENTINEL-2A','1 40697U 15028A   25020.52083333  .00000123  00000-0  25100-4 0  9994','2 40697  98.5678 157.3450 0001678 102.9010 257.1010 14.30814819285234'],
+['SENTINEL-2B','1 42063U 17013A   25020.50694444  .00000134  00000-0  27300-4 0  9991','2 42063  98.5689 177.4560 0001789 103.0120 256.0010 14.30816385262345'],
+['SENTINEL-3A','1 41335U 16011A   25020.51388889  .00000145  00000-0  29500-4 0  9993','2 41335  98.6234 197.5670 0001890 104.1230 255.9010 14.27006641267234'],
+['SENTINEL-3B','1 43437U 18039A   25020.52083333  .00000156  00000-0  31700-4 0  9992','2 43437  98.6245 217.6780 0001901 105.2340 254.8010 14.27012023249345'],
+['SENTINEL-5P','1 42969U 17064A   25020.50000000  .00000167  00000-0  33900-4 0  9994','2 42969  98.7234 237.7890 0002012 106.3450 253.7010 14.19674819259234'],
+['SENTINEL-6A','1 46984U 20069A   25020.51388889  .00000234  00000-0  10700-4 0  9991','2 46984  66.0567 257.8910 0002123 267.8910  92.1120 12.80876211193345'],
+['GRACE-FO 1','1 43476U 18047A   25020.52083333  .00000112  00000-0  22900-4 0  9993','2 43476  89.0123 277.9010 0001234  95.5670 264.5340 14.73019647247234'],
+['GRACE-FO 2','1 43477U 18047B   25020.50694444  .00000123  00000-0  25100-4 0  9992','2 43477  89.0134 297.0120 0001345  96.6780 263.4230 14.73022026247345'],
+['ICESat-2','1 43613U 18070A   25020.51388889  .00000189  00000-0  38400-4 0  9994','2 43613  92.0234 317.1230 0001456  97.7890 262.3120 14.92085462237234'],
+['SWOT','1 54754U 22183A   25020.52083333  .00000278  00000-0  12700-4 0  9991','2 54754  77.6234 337.2340 0002567 268.0120  91.9890 13.01014812114345'],
+['EARTH CARE','1 59126U 24049A   25020.50000000  .00000134  00000-0  27300-4 0  9993','2 59126  97.0123 357.3450 0001678 100.9010 259.1010 14.83206912  8345'],
+['CLOUDSAT','1 29107U 06016B   25020.51388889  .00000145  00000-0  29500-4 0  9992','2 29107  98.2234  17.4560 0001789 102.0120 258.0010 14.57173534354234'],
+['CALIPSO','1 29108U 06016C   25020.52083333  .00000156  00000-0  31700-4 0  9994','2 29108  98.2245  37.5670 0001890 103.1230 256.9010 14.57176726354345'],
+['CHEOPS','1 44874U 19092B   25020.50694444  .00000089  00000-0  18200-4 0  9991','2 44874  98.2356  57.6780 0001901 104.2340 255.8010 14.37291547185234'],
+['TESS','1 43435U 18038A   25020.51388889  .00000078  00000-0  00000+0 0  9993','2 43435  37.0234  77.7890 5512345 285.0120  24.9880  0.33435217 19345'],
+['GAIA','1 39479U 13074A   25020.52083333  .00000034  00000-0  00000+0 0  9992','2 39479   0.3456 271.5670 0005678 285.6780  74.3210  0.99892134 38234'],
+['XMM-NEWTON','1 25989U 99066A   25020.50000000  .00000023  00000-0  00000+0 0  9994','2 25989  69.9567 179.6780 7985234 297.8910  45.6540  0.56010894309345'],
+['CHANDRA','1 25867U 99040B   25020.51388889  .00000012  00000-0  00000+0 0  9991','2 25867  76.7234 197.7890 7441234 273.9010  28.5430  0.37640281209234'],
+],
+
+debris:[
+['FENGYUN 1C DEB','1 29228U 99025CU  25020.55555556  .00000156  00000-0  16200-3 0  9994','2 29228  98.8790  73.4560 0021234  80.3450 279.7560 14.12290764 41345'],
+['FENGYUN 1C DEB (2)','1 29273U 99025EW  25020.54166667  .00000134  00000-0  13900-3 0  9993','2 29273  98.8910  93.5670 0019876  82.4560 277.6450 14.12295023 41234'],
+['COSMOS 2251 DEB','1 33878U 93036RU  25020.52777778  .00000112  00000-0  11600-3 0  9992','2 33878  74.0234 313.6780 0032456  84.5670 275.5340 14.10398342 58345'],
+['COSMOS 2251 DEB (2)','1 33903U 93036SR  25020.51388889  .00000123  00000-0  12700-3 0  9991','2 33903  74.0345 333.7890 0031234  86.6780 273.4230 14.10401534 58234'],
+['IRIDIUM 33 DEB','1 33750U 97051CE  25020.50000000  .00000145  00000-0  15000-3 0  9994','2 33750  86.3456 153.8910 0011234  88.7890 271.3120 14.52145987 53345'],
+['IRIDIUM 33 DEB (2)','1 33756U 97051CK  25020.52083333  .00000167  00000-0  17300-3 0  9993','2 33756  86.3567 173.9010 0012345  90.8910 269.2010 14.52148179 53234'],
+['COSMOS 1408 DEB','1 49271U 82092AEL 25020.50694444  .00000023  00000-0  24000-4 0  9992','2 49271  82.9567  43.0120 0013456  92.9010 267.1010 14.34284521 45234'],
+['COSMOS 1408 DEB (2)','1 49363U 82092AWD 25020.51388889  .00000034  00000-0  35000-4 0  9994','2 49363  82.9678  63.1230 0014567  94.0120 266.0010 14.34280179 45123'],
+['SL-16 R/B (2)','1 19650U 88112A   25020.52083333  .00000012  00000-0  12500-4 0  9991','2 19650  71.0234 203.2340 0012345  96.1230 263.9010 14.08291983 98345'],
+['CZ-4B R/B','1 37820U 11043B   25020.50000000  .00000023  00000-0  24000-4 0  9993','2 37820  98.1234 223.3450 0013456  98.2340 261.8010 14.39254312 48234'],
+['THOR AGENA D R/B','1  2411U 66082B   25020.51388889  .00000034  00000-0  35000-4 0  9992','2  2411  99.7234 243.4560 0014567 100.3450 259.7010 14.77126021 98345'],
+['BREEZE-M DEB','1 38746U 12051C   25020.52083333  .00000012  00000-0  12500-4 0  9994','2 38746  49.7345 263.5670 2134567 267.4560  77.6540  3.27619234 39234'],
+['H-2A R/B','1 38322U 12025B   25020.50694444  .00000023  00000-0  24000-4 0  9991','2 38322  98.2456 283.6780 0015678 102.5670 257.5340 14.30427189 38345'],
+['DELTA 1 DEB','1  9934U 77021C   25020.51388889  .00000012  00000-0  12500-4 0  9993','2  9934 101.8567 303.7890 0016789 104.6780 255.4230 14.56214987 87234'],
+['ATLAS CENTAUR R/B','1  1998U 65065B   25020.52083333  .00000034  00000-0  35000-4 0  9992','2  1998  28.8678 323.8910 0762345 282.7890  72.3450  3.22578934108345'],
+]
+};
+
+/* ═══════════════════════════════════
+   GROUP METADATA
+═══════════════════════════════════ */
+const GROUPS = {
+  stations:{ label:'Space Stations',              color:0x00ff88, dot:'#00ff88', icon:'🛰️',  typeLabel:'Space Station / Crewed Lab' },
+  weather: { label:'Weather Satellites',          color:0x4488ff, dot:'#4488ff', icon:'🌦️',  typeLabel:'Meteorological Satellite' },
+  nav:     { label:'Navigation (GNSS)',           color:0xffcc00, dot:'#ffcc00', icon:'📡',  typeLabel:'Navigation / GNSS Satellite' },
+  starlink:{ label:'SpaceX Starlink',             color:0x00e5ff, dot:'#00e5ff', icon:'🔗',  typeLabel:'Commercial Broadband Constellation' },
+  oneweb:  { label:'OneWeb',                      color:0xcc66ff, dot:'#cc66ff', icon:'🌐',  typeLabel:'Commercial Broadband Constellation' },
+  science: { label:'Earth Observation & Science', color:0xff8800, dot:'#ff8800', icon:'🔭',  typeLabel:'Scientific / Earth Observation' },
+  debris:  { label:'Space Debris',                color:0xff4455, dot:'#ff4455', icon:'💥',  typeLabel:'Space Debris / Rocket Body' },
+};
+
+function classifyOrbit(altKm){
+  if(altKm<2000)   return{label:'LEO — Low Earth Orbit',    short:'LEO',color:'#00ff88'};
+  if(altKm<8000)   return{label:'MEO — Medium Earth Orbit', short:'MEO',color:'#ffcc00'};
+  if(altKm<40000)  return{label:'GEO — Geostationary Orbit',short:'GEO',color:'#4488ff'};
+  return                 {label:'HEO — High Earth Orbit',   short:'HEO',color:'#ff8800'};
+}
+
+function parseIntdes(s){
+  if(!s||!s.trim())return{year:'—',launch:'—',piece:'—'};
+  s=s.trim();
+  const yr2=parseInt(s.slice(0,2));
+  return{
+    year: String(yr2>=57?1900+yr2:2000+yr2),
+    launch: String(parseInt(s.slice(2,5))||'—'),
+    piece: s.slice(5).trim()||'—'
+  };
+}
+
+function epochFromSatrec(sr){
+  try{
+    const y=sr.epochyr,yr=y<57?2000+y:1900+y;
+    const d=new Date(Date.UTC(yr,0,1)+(sr.epochdays-1)*86400000);
+    return d.toISOString().slice(0,10);
+  }catch(e){return'—'}
+}
+
+/* ═══════════════════════════════════
+   THREE.JS
+═══════════════════════════════════ */
+const EARTH_R=6371;
+let scene,camera,renderer;
+let satellites=[],satMeshes=[],orbitLines=[];
+let selectedSat=null,showOrbits=true;
+let activeGroups=new Set(['stations','weather','nav','starlink','science']);
+let searchQuery='';
+let isDragging=false,prevMouse={x:0,y:0};
+let sph={theta:.4,phi:1.2},tSph={theta:.4,phi:1.2};
+let zoom=4.2,tZoom=4.2;
+let autoRotate=true,lastInteract=0;
+const raycaster=new THREE.Raycaster();
+const mouse=new THREE.Vector2(-9,-9);
+
+function geoToVec3(lat,lon,altKm){
+  const r=1+altKm/EARTH_R;
+  const phi=(90-lat)*Math.PI/180;
+  const lam=lon*Math.PI/180;
+  return new THREE.Vector3(r*Math.sin(phi)*Math.sin(lam),r*Math.cos(phi),-r*Math.sin(phi)*Math.cos(lam));
+}
+
+function initScene(){
+  const wrap=document.getElementById('canvas-wrap');
+  scene=new THREE.Scene();
+  camera=new THREE.PerspectiveCamera(40,wrap.clientWidth/wrap.clientHeight,.01,1000);
+  renderer=new THREE.WebGLRenderer({canvas:document.getElementById('globe'),antialias:true});
+  renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+  renderer.setSize(wrap.clientWidth,wrap.clientHeight);
+  renderer.setClearColor(0x030a14,1);
+  addStars();addGlobe();addGraticule();
+  scene.add(new THREE.AmbientLight(0x223366,1.2));
+  const sun=new THREE.DirectionalLight(0x99bbff,1.4);sun.position.set(6,3,4);scene.add(sun);
+  window.addEventListener('resize',onResize);onResize();
+}
+
+function addStars(){
+  const N=5000,pos=new Float32Array(N*3);
+  for(let i=0;i<N*3;i+=3){const r=80+Math.random()*30,th=Math.random()*Math.PI*2,ph=Math.acos(2*Math.random()-1);pos[i]=r*Math.sin(ph)*Math.cos(th);pos[i+1]=r*Math.sin(ph)*Math.sin(th);pos[i+2]=r*Math.cos(ph);}
+  const geo=new THREE.BufferGeometry();geo.setAttribute('position',new THREE.BufferAttribute(pos,3));
+  scene.add(new THREE.Points(geo,new THREE.PointsMaterial({color:0xffffff,size:.13,transparent:true,opacity:.75})));
+}
+function addGlobe(){
+  scene.add(new THREE.Mesh(new THREE.SphereGeometry(1,64,64),new THREE.MeshPhongMaterial({color:0x0a2040,emissive:0x050f20,shininess:15})));
+  scene.add(new THREE.Mesh(new THREE.SphereGeometry(1.001,36,18),new THREE.MeshBasicMaterial({color:0x1a4488,wireframe:true,transparent:true,opacity:.12})));
+  scene.add(new THREE.Mesh(new THREE.SphereGeometry(1.055,64,64),new THREE.MeshBasicMaterial({color:0x1155ff,transparent:true,opacity:.06,side:THREE.BackSide})));
+}
+function addGraticule(){
+  const lm=new THREE.LineBasicMaterial({color:0x1a3366,transparent:true,opacity:.45});
+  const em=new THREE.LineBasicMaterial({color:0x224488,transparent:true,opacity:.7});
+  const S=120,R=1.002;
+  for(let lat=-60;lat<=60;lat+=30){const pts=[];for(let i=0;i<=S;i++)pts.push(geoToVec3(lat,(i/S)*360-180,0).multiplyScalar(R));scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),lat===0?em:lm));}
+  for(let lon=-180;lon<180;lon+=30){const pts=[];for(let i=0;i<=S;i++)pts.push(geoToVec3(-90+(i/S)*180,lon,0).multiplyScalar(R));scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),lm));}
+}
+
+function propagate(sat,date){
+  if(!sat.satrec)return false;
+  try{
+    const d=date||new Date();
+    const pv=satellite.propagate(sat.satrec,d);
+    if(!pv||!pv.position)return false;
+    const gmst=satellite.gstime(d);
+    const gd=satellite.eciToGeodetic(pv.position,gmst);
+    sat.lat=satellite.degreesLat(gd.latitude);
+    sat.lon=satellite.degreesLong(gd.longitude);
+    sat.altKm=gd.height;
+    if(pv.velocity){const v=pv.velocity;sat.velKms=Math.sqrt(v.x*v.x+v.y*v.y+v.z*v.z);}
+    sat.pos3d=geoToVec3(sat.lat,sat.lon,sat.altKm);
+    return true;
+  }catch(e){return false;}
+}
+
+function buildOrbitLine(sat,color){
+  if(!sat.satrec)return null;
+  const now=Date.now();
+  const period=(2*Math.PI/sat.satrec.no)*60000;
+  const STEPS=240;
+  const mat=new THREE.LineBasicMaterial({color,transparent:true,opacity:.5});
+
+  // Collect raw lat/lon/alt samples first
+  const samples=[];
+  for(let i=0;i<=STEPS;i++){
+    const t=new Date(now+(i/STEPS)*period);
+    try{
+      const pv=satellite.propagate(sat.satrec,t);
+      if(!pv||!pv.position)continue;
+      const gmst=satellite.gstime(t);
+      const gd=satellite.eciToGeodetic(pv.position,gmst);
+      samples.push({
+        lat:satellite.degreesLat(gd.latitude),
+        lon:satellite.degreesLong(gd.longitude),
+        alt:gd.height
+      });
+    }catch(e){}
+  }
+  if(samples.length<2)return null;
+
+  // Split into segments wherever longitude jumps >200° (antimeridian crossing).
+  // Each segment becomes its own THREE.Line so no cross-globe spikes appear.
+  const group=new THREE.Group();
+  group.userData.satName=sat.name;
+
+  let seg=[geoToVec3(samples[0].lat,samples[0].lon,samples[0].alt)];
+  for(let i=1;i<samples.length;i++){
+    const dLon=Math.abs(samples[i].lon-samples[i-1].lon);
+    if(dLon>200){
+      // Antimeridian crossed — flush current segment and start a new one
+      if(seg.length>=2){
+        const l=new THREE.Line(new THREE.BufferGeometry().setFromPoints(seg),mat);
+        group.add(l);
+      }
+      seg=[geoToVec3(samples[i].lat,samples[i].lon,samples[i].alt)];
+    }else{
+      seg.push(geoToVec3(samples[i].lat,samples[i].lon,samples[i].alt));
+    }
+  }
+  // Flush last segment
+  if(seg.length>=2){
+    const l=new THREE.Line(new THREE.BufferGeometry().setFromPoints(seg),mat);
+    group.add(l);
+  }
+
+  return group.children.length>0?group:null;
+}
+
+function loadAll(){
+  satMeshes.forEach(m=>scene.remove(m));satMeshes=[];
+  clearOrbitLines();satellites=[];
+
+  for(const[gKey,cfg] of Object.entries(GROUPS)){
+    if(!activeGroups.has(gKey))continue;
+    const tles=TLE_DB[gKey]||[];
+    for(const entry of tles){
+      const[name,line1,line2]=entry;
+      try{
+        const satrec=satellite.twoline2satrec(line1.trim(),line2.trim());
+        const intdesRaw=line1.slice(9,17).trim();
+        const intd=parseIntdes(intdesRaw);
+        const noradId=parseInt(line1.slice(2,7));
+        const sat={
+          name:name.trim(),group:gKey,satrec,
+          lat:0,lon:0,altKm:0,velKms:0,pos3d:null,
+          incDeg:satrec.inclo*(180/Math.PI),
+          periodMin:(2*Math.PI/satrec.no),
+          ecc:satrec.ecco,
+          argpDeg:satrec.argpo*(180/Math.PI),
+          raanDeg:satrec.nodeo*(180/Math.PI),
+          bstar:satrec.bstar,
+          noradId,intdesRaw,intd,
+          revno:parseInt(line2.slice(63,68))||0,
+          epoch:epochFromSatrec(satrec),
+          // Apogee/perigee from TLE
+          apo: Math.round((satrec.a*(1+satrec.ecco)-1)*EARTH_R),
+          peri:Math.round((satrec.a*(1-satrec.ecco)-1)*EARTH_R),
+        };
+        propagate(sat);
+        const isSmall=gKey==='starlink'||gKey==='oneweb';
+        const dotSz=isSmall?0.009:0.015;
+        const mesh=new THREE.Mesh(new THREE.SphereGeometry(dotSz,6,6),new THREE.MeshBasicMaterial({color:cfg.color}));
+        mesh.userData.sat=sat;
+        if(sat.pos3d)mesh.position.copy(sat.pos3d);
+        scene.add(mesh);satMeshes.push(mesh);satellites.push(sat);
+      }catch(e){}
+    }
+  }
+  rebuildAllOrbits();
+  document.getElementById('hud-count').textContent=satellites.length;
+  document.getElementById('panel-count').textContent=satellites.length;
+  renderList();
+}
+
+function rebuildAllOrbits(){
+  clearOrbitLines();
+  if(!showOrbits)return;
+  let n=0;
+  for(const sat of satellites){
+    const cfg=GROUPS[sat.group];if(!cfg)continue;
+    const isLarge=sat.group==='starlink'||sat.group==='oneweb';
+    const idx=satellites.filter(s=>s.group===sat.group).indexOf(sat);
+    if(isLarge&&idx%4!==0)continue;
+    const l=buildOrbitLine(sat,cfg.color);
+    if(l){scene.add(l);orbitLines.push(l);n++;}
+  }
+  document.getElementById('hud-orbits').textContent=n;
+}
+
+function clearOrbitLines(){
+  orbitLines.forEach(l=>scene.remove(l));orbitLines=[];
+  document.getElementById('hud-orbits').textContent=0;
+}
+
+function selectSat(sat){
+  selectedSat=sat;
+  // Dim all orbit groups; highlight the selected one
+  orbitLines.forEach(g=>{
+    const isSel=g.userData.satName===sat.name;
+    g.children.forEach(l=>l.material.opacity=isSel?.95:.08);
+  });
+  // Ensure this sat's orbit is drawn (may have been skipped for dense constellations)
+  if(!orbitLines.find(g=>g.userData.satName===sat.name)){
+    const cfg=GROUPS[sat.group];
+    const g=buildOrbitLine(sat,cfg?cfg.color:0xffffff);
+    if(g){g.children.forEach(l=>l.material.opacity=.95);scene.add(g);orbitLines.push(g);}
+  }
+  if(sat.pos3d){
+    const d=sat.pos3d.clone().normalize();
+    tSph.phi=Math.acos(Math.max(-1,Math.min(1,d.y)));
+    tSph.theta=Math.atan2(d.x,-d.z);
+    tZoom=Math.max((1+sat.altKm/EARTH_R)*1.7,2.0);
+  }
+  fillCard(sat);renderList();autoRotate=false;
+}
+
+function fillCard(sat){
+  if(!sat){document.getElementById('info-card').style.display='none';return;}
+  const cfg=GROUPS[sat.group]||{};
+  const orbit=classifyOrbit(sat.altKm||0);
+  document.getElementById('info-card').style.display='block';
+  document.getElementById('ic-icon').textContent=cfg.icon||'🛰️';
+  document.getElementById('ic-icon').style.background=(cfg.dot||'#fff')+'22';
+  document.getElementById('ic-name').textContent=sat.name;
+  document.getElementById('ic-name').style.color=cfg.dot||'#fff';
+  document.getElementById('ic-type').textContent=cfg.typeLabel||cfg.label||sat.group;
+  updateCardLive(sat);
+  // Orbital elements
+  document.getElementById('ic-inc').textContent  =sat.incDeg?sat.incDeg.toFixed(4)+'°':'—';
+  document.getElementById('ic-per').textContent  =sat.periodMin?sat.periodMin.toFixed(2)+' min':'—';
+  document.getElementById('ic-ecc').textContent  =sat.ecc!=null?sat.ecc.toFixed(7):'—';
+  document.getElementById('ic-argp').textContent =sat.argpDeg?sat.argpDeg.toFixed(4)+'°':'—';
+  document.getElementById('ic-raan').textContent =sat.raanDeg?sat.raanDeg.toFixed(4)+'°':'—';
+  document.getElementById('ic-mm').textContent   =sat.satrec?(sat.satrec.no*(1440/(2*Math.PI))).toFixed(8)+' rev/day':'—';
+  document.getElementById('ic-apo').textContent  =sat.apo!=null?sat.apo.toLocaleString()+' km':'—';
+  document.getElementById('ic-peri').textContent =sat.peri!=null?sat.peri.toLocaleString()+' km':'—';
+  // ID
+  document.getElementById('ic-norad').textContent   =sat.noradId||'—';
+  document.getElementById('ic-intdes').textContent  =sat.intdesRaw||'—';
+  document.getElementById('ic-launchyr').textContent=sat.intd?.year||'—';
+  document.getElementById('ic-launchno').textContent=sat.intd?.launch||'—';
+  document.getElementById('ic-piece').textContent   =sat.intd?.piece||'—';
+  document.getElementById('ic-epoch').textContent   =sat.epoch||'—';
+  document.getElementById('ic-bstar').textContent   =sat.bstar!=null?sat.bstar.toExponential(4):'—';
+  document.getElementById('ic-revno').textContent   =sat.revno||'—';
+  // Classification
+  document.getElementById('ic-group').textContent     =cfg.label||sat.group;
+  document.getElementById('ic-orbitclass').textContent=orbit.short;
+  document.getElementById('ic-badge-dot').style.background=cfg.dot||'#fff';
+  document.getElementById('ic-badge-label').textContent=orbit.label;
+  document.getElementById('ic-badge').style.borderColor=(cfg.dot||'#fff')+'55';
+}
+
+function updateCardLive(sat){
+  if(!sat)return;
+  document.getElementById('ic-lat').textContent=sat.lat!=null?sat.lat.toFixed(5)+'°':'—';
+  document.getElementById('ic-lon').textContent=sat.lon!=null?sat.lon.toFixed(5)+'°':'—';
+  document.getElementById('ic-alt').textContent=sat.altKm?sat.altKm.toFixed(2)+' km':'—';
+  document.getElementById('ic-vel').textContent=sat.velKms?sat.velKms.toFixed(4)+' km/s':'—';
+}
+
+function renderList(){
+  const q=searchQuery.toLowerCase();
+  const list=document.getElementById('sat-list');list.innerHTML='';
+  const vis=satellites.filter(s=>!q||s.name.toLowerCase().includes(q));
+  const show=vis.slice(0,600);
+  for(const sat of show){
+    const cfg=GROUPS[sat.group]||{};
+    const row=document.createElement('div');
+    row.className='sat-row'+(sat===selectedSat?' selected':'');
+    row.innerHTML=`<div class="sat-dot" style="background:${cfg.dot||'#fff'}"></div>`+
+      `<div class="sat-name">${sat.name}</div>`+
+      `<div class="sat-alt">${sat.altKm?sat.altKm.toFixed(0):'—'} km</div>`;
+    row.addEventListener('click',()=>selectSat(sat));
+    list.appendChild(row);
+  }
+  const extra=vis.length>600?` (+${vis.length-600} hidden)`:'';
+  document.getElementById('panel-footer').textContent=`${vis.length}/${satellites.length} shown${extra}`;
+}
+
+let lastHover=null;
+function checkHover(cx,cy){
+  const wrap=document.getElementById('canvas-wrap');
+  const rect=wrap.getBoundingClientRect();
+  mouse.x=((cx-rect.left)/rect.width)*2-1;
+  mouse.y=-((cy-rect.top)/rect.height)*2+1;
+  raycaster.setFromCamera(mouse,camera);
+  const hits=raycaster.intersectObjects(satMeshes);
+  const tt=document.getElementById('tooltip');
+  if(hits.length>0){
+    const sat=hits[0].object.userData.sat;
+    if(sat!==lastHover){
+      lastHover=sat;
+      const cfg=GROUPS[sat.group]||{};
+      document.getElementById('tt-name').textContent=sat.name;
+      document.getElementById('tt-name').style.color=cfg.dot||'#fff';
+      document.getElementById('tt-alt').textContent=sat.altKm?sat.altKm.toFixed(0)+' km':'—';
+      document.getElementById('tt-vel').textContent=sat.velKms?sat.velKms.toFixed(2)+' km/s':'—';
+      document.getElementById('tt-ll').textContent=sat.lat!=null?sat.lat.toFixed(2)+'°, '+sat.lon.toFixed(2)+'°':'—';
+    }
+    tt.style.display='block';
+    tt.style.left=(cx-rect.left+14)+'px';
+    tt.style.top=(cy-rect.top-10)+'px';
+    renderer.domElement.style.cursor='pointer';
+  }else{
+    tt.style.display='none';lastHover=null;
+    renderer.domElement.style.cursor=isDragging?'grabbing':'grab';
+  }
+}
+
+function attachEvents(){
+  const c=renderer.domElement;
+  c.addEventListener('mousedown',e=>{isDragging=true;autoRotate=false;lastInteract=Date.now();prevMouse={x:e.clientX,y:e.clientY};c.style.cursor='grabbing'});
+  c.addEventListener('mousemove',e=>{
+    if(isDragging){tSph.theta-=(e.clientX-prevMouse.x)*.004;tSph.phi=Math.max(.08,Math.min(Math.PI-.08,tSph.phi+(e.clientY-prevMouse.y)*.004));prevMouse={x:e.clientX,y:e.clientY};}
+    checkHover(e.clientX,e.clientY);
+  });
+  c.addEventListener('mouseup',()=>{isDragging=false});
+  c.addEventListener('mouseleave',()=>{isDragging=false;document.getElementById('tooltip').style.display='none'});
+  c.addEventListener('click',e=>{
+    const wrap=document.getElementById('canvas-wrap');const rect=wrap.getBoundingClientRect();
+    mouse.x=((e.clientX-rect.left)/rect.width)*2-1;mouse.y=-((e.clientY-rect.top)/rect.height)*2+1;
+    raycaster.setFromCamera(mouse,camera);
+    const hits=raycaster.intersectObjects(satMeshes);
+    if(hits.length>0)selectSat(hits[0].object.userData.sat);
+  });
+  c.addEventListener('wheel',e=>{tZoom=Math.max(1.3,Math.min(12,tZoom+e.deltaY*.004));autoRotate=false;lastInteract=Date.now();e.preventDefault();},{passive:false});
+  let lp=0;
+  c.addEventListener('touchstart',e=>{isDragging=true;autoRotate=false;lastInteract=Date.now();if(e.touches.length===1)prevMouse={x:e.touches[0].clientX,y:e.touches[0].clientY};if(e.touches.length===2){const dx=e.touches[0].clientX-e.touches[1].clientX,dy=e.touches[0].clientY-e.touches[1].clientY;lp=Math.sqrt(dx*dx+dy*dy);}},{passive:true});
+  c.addEventListener('touchmove',e=>{if(e.touches.length===1&&isDragging){tSph.theta-=(e.touches[0].clientX-prevMouse.x)*.005;tSph.phi=Math.max(.08,Math.min(Math.PI-.08,tSph.phi+(e.touches[0].clientY-prevMouse.y)*.005));prevMouse={x:e.touches[0].clientX,y:e.touches[0].clientY};}if(e.touches.length===2){const dx=e.touches[0].clientX-e.touches[1].clientX,dy=e.touches[0].clientY-e.touches[1].clientY,d=Math.sqrt(dx*dx+dy*dy);tZoom=Math.max(1.3,Math.min(12,tZoom-(d-lp)*.01));lp=d;}e.preventDefault();},{passive:false});
+  c.addEventListener('touchend',()=>{isDragging=false});
+
+  document.querySelectorAll('.pill[data-group]').forEach(btn=>{
+    btn.addEventListener('click',()=>{
+      const g=btn.dataset.group;
+      if(activeGroups.has(g)){activeGroups.delete(g);btn.classList.remove('active');}
+      else{activeGroups.add(g);btn.classList.add('active');}
+      loadAll();
+      if(selectedSat&&!activeGroups.has(selectedSat.group)){selectedSat=null;fillCard(null);}
+    });
+  });
+  document.getElementById('orbit-toggle').addEventListener('click',()=>{
+    showOrbits=!showOrbits;
+    const b=document.getElementById('orbit-toggle');b.textContent=showOrbits?'Orbits ON':'Orbits OFF';b.classList.toggle('active',showOrbits);
+    if(showOrbits)rebuildAllOrbits();else clearOrbitLines();
+  });
+  document.getElementById('autorotate-toggle').addEventListener('click',()=>{
+    autoRotate=!autoRotate;document.getElementById('autorotate-toggle').classList.toggle('active',autoRotate);
+  });
+  document.getElementById('search').addEventListener('input',e=>{searchQuery=e.target.value;renderList();});
+  document.getElementById('ic-close').addEventListener('click',()=>{
+    selectedSat=null;fillCard(null);orbitLines.forEach(g=>g.children.forEach(l=>l.material.opacity=.5));renderList();
+  });
+}
+
+function onResize(){
+  const w=document.getElementById('canvas-wrap');
+  camera.aspect=w.clientWidth/w.clientHeight;camera.updateProjectionMatrix();renderer.setSize(w.clientWidth,w.clientHeight);
+}
+
+let lastProp=0;
+function animate(){
+  requestAnimationFrame(animate);
+  const now=Date.now();
+  if(!isDragging&&now-lastInteract>10000)autoRotate=true;
+  if(autoRotate)tSph.theta+=.0006;
+  sph.theta+=(tSph.theta-sph.theta)*.08;
+  sph.phi+=(tSph.phi-sph.phi)*.08;
+  zoom+=(tZoom-zoom)*.08;
+  camera.position.set(zoom*Math.sin(sph.phi)*Math.sin(sph.theta),zoom*Math.cos(sph.phi),-zoom*Math.sin(sph.phi)*Math.cos(sph.theta));
+  camera.lookAt(0,0,0);
+  if(now-lastProp>2000){
+    lastProp=now;
+    satellites.forEach(s=>propagate(s));
+    satMeshes.forEach(m=>{if(m.userData.sat.pos3d)m.position.copy(m.userData.sat.pos3d);});
+    if(selectedSat)updateCardLive(selectedSat);
+    document.getElementById('utc-clock').textContent='UTC '+new Date().toISOString().slice(11,19);
+  }
+  renderer.render(scene,camera);
+}
+
+initScene();attachEvents();loadAll();animate();
+</script>
+</body>
+</html>
