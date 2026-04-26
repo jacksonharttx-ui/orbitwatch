@@ -1,10 +1,8 @@
-# 🛰️ OrbitWatch — Real-Time Satellite Tracker
+#  OrbitWatch — Real-Time Satellite Tracker
 
 A self-contained, single-file satellite tracker with a 3D interactive globe.
 **No backend required.** Hosted as a static site on GitHub Pages / Vercel.
 
-## Live Demo
-> Deploy to Vercel or GitHub Pages — just push and it works.
 
 ## Features
 - 150–400 real satellites across 7 groups
@@ -35,27 +33,6 @@ Every Monday the GitHub Action:
 
 Satellite **positions** are always live (SGP4 propagation in the browser).
 The **orbital elements** are refreshed weekly so accuracy stays within ~1 km.
-
-## Manual TLE Refresh
-Trigger a refresh any time from the GitHub Actions tab:
-> Actions → Refresh TLE Data → Run workflow
-
-Or run locally:
-```bash
-python scripts/build.py
-```
-
-## Deploying
-
-### Vercel (recommended)
-1. Push this repo to GitHub
-2. Import at vercel.com → Deploy
-3. Done. Vercel auto-deploys on every push (including the weekly TLE commit)
-
-### GitHub Pages
-1. Push to GitHub
-2. Settings → Pages → Deploy from branch `main` / `root`
-3. Your URL: `https://yourusername.github.io/orbitwatch/`
 
 ## Satellite Groups
 | Group | Source | Count |
