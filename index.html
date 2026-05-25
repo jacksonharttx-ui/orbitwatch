@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- TLE data refreshed: 2026-05-18 09:40 UTC -->
+<!-- TLE data refreshed: 2026-05-25 09:49 UTC -->
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
 <title>ORBITWATCH // Space Domain Awareness</title>
@@ -353,6 +353,1414 @@ science:[
 
 debris:[
 ['FENGYUN 1C DEB','1 29228U 99025CU  25020.55555556  .00000156  00000-0  16200-3 0  9994','2 29228  98.8790  73.4560 0021234  80.3450 279.7560 14.12290764 41345']
+};
+
+/* ═══════════════════════════════════
+   GROUP CONFIG
+═══════════════════════════════════ */
+const GROUPS={
+  stations:{ label:'SPACE STATIONS',   typeLabel:'Space Station / Crewed',          color:0x00e87a, hex:'#00e87a' },
+  weather: { label:'WEATHER',          typeLabel:'Meteorological Satellite',         color:0x00d4ff, hex:'#00d4ff' },
+  nav:     { label:'NAV / GNSS',       typeLabel:'Navigation / GNSS',               color:0xf5c842, hex:'#f5c842' },
+  starlink:{ label:'STARLINK',         typeLabel:'Commercial Broadband (SpaceX)',    color:0xf53d9e, hex:'#f53d9e' },
+  oneweb:  { label:'ONEWEB',           typeLabel:'Commercial Broadband (OneWeb)',    color:0x9b59f5, hex:'#9b59f5' },
+  science: { label:'SCIENCE / EO',     typeLabel:'Scientific / Earth Observation',  color:0xf57c20, hex:'#f57c20' },
+  debris:  { label:'DEBRIS',           typeLabel:'Space Debris / Rocket Body',      color:0xf53d3d, hex:'#f53d3d' },
+};
+
+function classifyOrbit(alt){
+  if(alt<2000)  return{label:'LEO',full:'Low Earth Orbit',    color:'#00e87a'};
+  if(alt<8000)  return{label:'MEO',full:'Medium Earth Orbit', color:'#f5c842'};
+  if(alt<40000) return{label:'GEO',full:'Geostationary Orbit',color:'#00d4ff'};
+  return              {label:'HEO',full:'High Earth Orbit',   color:'#f57c20'};
+}
+function parseIntdes(s){
+  if(!s||!s.trim())return{year:'—',launch:'—',piece:'—'};
+  s=s.trim();const yr2=parseInt(s.slice(0,2));
+  return{year:String(yr2>=57?1900+yr2:2000+yr2),launch:String(parseInt(s.slice(2,5))||'—'),piece:s.slice(5).trim()||'—'};
+}
+function epochFromSatrec(sr){
+  try{const y=sr.epochyr,yr=y<57?2000+y:1900+y;const d=new Date(Date.UTC(yr,0,1)+(sr.epochdays-1)*86400000);return d.toISOString().slice(0,10);}catch(e){return'—'}
+}
+
+/* ═══════════════════════════════════
+   THREE.JS
+═══════════════════════════════════ */
+const EARTH_R=6371;
+let scene,camera,renderer;
+let satellites=[],satSprites=[],orbitLines=[];
+let selectedSat=null,showOrbits=true;
+let activeGroups=new Set(['stations','weather','nav','starlink','science']);
+let searchQuery='';
+let isDragging=false,prevMouse={x:0,y:0};
+let sph={theta:.5,phi:1.15},tSph={theta:.5,phi:1.15};
+let zoom=3.8,tZoom=3.8;
+let autoRotate=true,lastInteract=0;
+const raycaster=new THREE.Raycaster();
+raycaster.params.Line={threshold:0.01};
+raycaster.params.Points={threshold:0.02};
+const mouse=new THREE.Vector2(-9,-9);
+
+function geoToVec3(lat,lon,altKm){
+  const r=1+altKm/EARTH_R;
+  const phi=(90-lat)*Math.PI/180;
+  const lam=lon*Math.PI/180;
+  return new THREE.Vector3(r*Math.sin(phi)*Math.sin(lam),r*Math.cos(phi),-r*Math.sin(phi)*Math.cos(lam));
+}
+
+
+/* ─── GROUND SITES: Mission Controls + Launch Sites ─── */
+const GROUND_SITES = [
+  // Launch Sites
+  {name:'Kennedy Space Center',    lat:28.57,  lon:-80.65,  type:'launch',  flag:'🚀'},
+  {name:'Cape Canaveral SFS',      lat:28.49,  lon:-80.58,  type:'launch',  flag:'🚀'},
+  {name:'Vandenberg SFB',          lat:34.74,  lon:-120.57, type:'launch',  flag:'🚀'},
+  {name:'Baikonur Cosmodrome',     lat:45.96,  lon:63.31,   type:'launch',  flag:'🚀'},
+  {name:'Plesetsk Cosmodrome',     lat:62.93,  lon:40.57,   type:'launch',  flag:'🚀'},
+  {name:'Jiuquan Launch Center',   lat:40.96,  lon:100.29,  type:'launch',  flag:'🚀'},
+  {name:'Xichang Launch Center',   lat:28.25,  lon:102.03,  type:'launch',  flag:'🚀'},
+  {name:'Wenchang Space Center',   lat:19.61,  lon:110.95,  type:'launch',  flag:'🚀'},
+  {name:'Tanegashima Space Center',lat:30.40,  lon:130.97,  type:'launch',  flag:'🚀'},
+  {name:'Satish Dhawan (ISRO)',    lat:13.73,  lon:80.24,   type:'launch',  flag:'🚀'},
+  {name:'Guiana Space Centre',     lat:5.24,   lon:-52.77,  type:'launch',  flag:'🚀'},
+  {name:'Mahia Launch Complex',    lat:-39.26, lon:177.86,  type:'launch',  flag:'🚀'},
+  {name:'Starbase (Boca Chica)',   lat:25.99,  lon:-97.16,  type:'launch',  flag:'🚀'},
+  // Mission Controls
+  {name:'JPL (NASA)',              lat:34.20,  lon:-118.17, type:'control', flag:'📡'},
+  {name:'Johnson Space Center',    lat:29.56,  lon:-95.09,  type:'control', flag:'📡'},
+  {name:'Goddard Space Flight Ctr',lat:39.00,  lon:-76.88,  type:'control', flag:'📡'},
+  {name:'ESA ESOC (Darmstadt)',    lat:49.87,  lon:8.62,    type:'control', flag:'📡'},
+  {name:'JAXA Tsukuba',            lat:36.11,  lon:140.09,  type:'control', flag:'📡'},
+  {name:'ISRO ISTRAC (Bangalore)', lat:13.02,  lon:77.57,   type:'control', flag:'📡'},
+  {name:'SpaceX HQ (Hawthorne)',   lat:33.92,  lon:-118.33, type:'control', flag:'📡'},
+  {name:'CNSA Beijing',            lat:39.91,  lon:116.39,  type:'control', flag:'📡'},
+  {name:'Roscosmos (Moscow)',      lat:55.76,  lon:37.62,   type:'control', flag:'📡'},
+];
+
+const groundMeshes = [];
+
+function addGroundSites(){
+  for(const site of GROUND_SITES){
+    const pos = geoToVec3(site.lat, site.lon, 0).multiplyScalar(1.005);
+
+    // Marker — small glowing sphere
+    const isLaunch = site.type === 'launch';
+    const col = isLaunch ? 0xffaa00 : 0x00d4ff;
+    const r   = isLaunch ? 0.007 : 0.006;
+
+    const mesh = new THREE.Mesh(
+      new THREE.SphereGeometry(r, 8, 8),
+      new THREE.MeshBasicMaterial({color: col})
+    );
+    mesh.position.copy(pos);
+    mesh.userData.site = site;
+    scene.add(mesh);
+    groundMeshes.push(mesh);
+
+    // Vertical spike
+    const spike = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.001, 0.001, isLaunch ? 0.04 : 0.03, 4),
+      new THREE.MeshBasicMaterial({color: col, transparent:true, opacity:0.6})
+    );
+    spike.position.copy(pos);
+    spike.lookAt(0,0,0);
+    spike.rotateX(Math.PI/2);
+    spike.translateY(-(isLaunch?0.02:0.015));
+    scene.add(spike);
+  }
+}
+
+function initScene(){
+  const wrap=document.getElementById('canvas-wrap');
+  scene=new THREE.Scene();
+  camera=new THREE.PerspectiveCamera(38,wrap.clientWidth/wrap.clientHeight,.01,1000);
+  renderer=new THREE.WebGLRenderer({canvas:document.getElementById('globe'),antialias:true,alpha:false});
+  renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+  renderer.setSize(wrap.clientWidth,wrap.clientHeight);
+  renderer.setClearColor(0x060a0d,1);
+  addStars();addGlobe();addGraticule();addCoastlines();
+  scene.add(new THREE.AmbientLight(0x334455,1.0));
+  const sun=new THREE.DirectionalLight(0x6699bb,0.8);sun.position.set(5,3,4);scene.add(sun);
+  window.addEventListener('resize',onResize);onResize();
+  addGroundSites();
+}
+
+function addStars(){
+  const N=6000,pos=new Float32Array(N*3);
+  for(let i=0;i<N*3;i+=3){
+    const r=90+Math.random()*20,th=Math.random()*Math.PI*2,ph=Math.acos(2*Math.random()-1);
+    pos[i]=r*Math.sin(ph)*Math.cos(th);pos[i+1]=r*Math.sin(ph)*Math.sin(th);pos[i+2]=r*Math.cos(ph);
+  }
+  const geo=new THREE.BufferGeometry();geo.setAttribute('position',new THREE.BufferAttribute(pos,3));
+  // Two sizes for depth
+  scene.add(new THREE.Points(geo,new THREE.PointsMaterial({color:0x8899aa,size:.08,transparent:true,opacity:.5})));
+  const geo2=new THREE.BufferGeometry();
+  const pos2=new Float32Array(500*3);
+  for(let i=0;i<500*3;i+=3){const r=88,th=Math.random()*Math.PI*2,ph=Math.acos(2*Math.random()-1);pos2[i]=r*Math.sin(ph)*Math.cos(th);pos2[i+1]=r*Math.sin(ph)*Math.sin(th);pos2[i+2]=r*Math.cos(ph);}
+  geo2.setAttribute('position',new THREE.BufferAttribute(pos2,3));
+  scene.add(new THREE.Points(geo2,new THREE.PointsMaterial({color:0xffffff,size:.18,transparent:true,opacity:.7})));
+}
+
+function addGlobe(){
+  // Dark ocean base
+  scene.add(new THREE.Mesh(new THREE.SphereGeometry(1,64,64),
+    new THREE.MeshPhongMaterial({color:0x060e18,emissive:0x030810,shininess:8})));
+  // Atmosphere rim
+  scene.add(new THREE.Mesh(new THREE.SphereGeometry(1.02,64,64),
+    new THREE.MeshBasicMaterial({color:0x0a2040,transparent:true,opacity:.08,side:THREE.BackSide})));
+  scene.add(new THREE.Mesh(new THREE.SphereGeometry(1.06,64,64),
+    new THREE.MeshBasicMaterial({color:0x001830,transparent:true,opacity:.04,side:THREE.BackSide})));
+}
+
+function addGraticule(){
+  const lm=new THREE.LineBasicMaterial({color:0x0d2035,transparent:true,opacity:.8});
+  const em=new THREE.LineBasicMaterial({color:0x102840,transparent:true,opacity:1});
+  const S=120,R=1.001;
+  for(let lat=-75;lat<=75;lat+=15){
+    const pts=[];for(let i=0;i<=S;i++)pts.push(geoToVec3(lat,(i/S)*360-180,0).multiplyScalar(R));
+    scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),lat===0?em:lm));
+  }
+  for(let lon=-180;lon<180;lon+=15){
+    const pts=[];for(let i=0;i<=S;i++)pts.push(geoToVec3(-90+(i/S)*180,lon,0).multiplyScalar(R));
+    scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),lm));
+  }
+}
+
+// Accurate continent outlines
+const COASTS=[
+[[-168,71.4],[-165,68.5],[-163.7,64.6],[-162,60.6],[-152,59.3],[-149,59.9],[-148.3,60.8],[-146.5,61.1],[-145,60.3],[-142,59.9],[-140,59.7],[-137.5,59.3],[-135.5,57],[-133.4,55.7],[-132,54.8],[-130.5,54.2],[-128.5,52.2],[-126.8,50.6],[-124.7,49],[-124.2,47.6],[-124.5,46.3],[-124.1,44.6],[-124.5,42.8],[-124.2,40.6],[-124,38],[-122.5,37.2],[-121.3,35.8],[-120.4,34.8],[-117.3,32.5],[-117.1,32.5],[-116,31],[-114.8,29.5],[-110,24],[-106.5,23],[-105.2,20.8],[-103.4,18.6],[-99.8,16.5],[-90.1,16],[-88,15.8],[-83.7,9.5],[-82.7,8.2],[-77.5,7.5]]
+};
+
+/* ═══════════════════════════════════
+   GROUP CONFIG
+═══════════════════════════════════ */
+const GROUPS={
+  stations:{ label:'SPACE STATIONS',   typeLabel:'Space Station / Crewed',          color:0x00e87a, hex:'#00e87a' },
+  weather: { label:'WEATHER',          typeLabel:'Meteorological Satellite',         color:0x00d4ff, hex:'#00d4ff' },
+  nav:     { label:'NAV / GNSS',       typeLabel:'Navigation / GNSS',               color:0xf5c842, hex:'#f5c842' },
+  starlink:{ label:'STARLINK',         typeLabel:'Commercial Broadband (SpaceX)',    color:0xf53d9e, hex:'#f53d9e' },
+  oneweb:  { label:'ONEWEB',           typeLabel:'Commercial Broadband (OneWeb)',    color:0x9b59f5, hex:'#9b59f5' },
+  science: { label:'SCIENCE / EO',     typeLabel:'Scientific / Earth Observation',  color:0xf57c20, hex:'#f57c20' },
+  debris:  { label:'DEBRIS',           typeLabel:'Space Debris / Rocket Body',      color:0xf53d3d, hex:'#f53d3d' },
+};
+
+function classifyOrbit(alt){
+  if(alt<2000)  return{label:'LEO',full:'Low Earth Orbit',    color:'#00e87a'};
+  if(alt<8000)  return{label:'MEO',full:'Medium Earth Orbit', color:'#f5c842'};
+  if(alt<40000) return{label:'GEO',full:'Geostationary Orbit',color:'#00d4ff'};
+  return              {label:'HEO',full:'High Earth Orbit',   color:'#f57c20'};
+}
+function parseIntdes(s){
+  if(!s||!s.trim())return{year:'—',launch:'—',piece:'—'};
+  s=s.trim();const yr2=parseInt(s.slice(0,2));
+  return{year:String(yr2>=57?1900+yr2:2000+yr2),launch:String(parseInt(s.slice(2,5))||'—'),piece:s.slice(5).trim()||'—'};
+}
+function epochFromSatrec(sr){
+  try{const y=sr.epochyr,yr=y<57?2000+y:1900+y;const d=new Date(Date.UTC(yr,0,1)+(sr.epochdays-1)*86400000);return d.toISOString().slice(0,10);}catch(e){return'—'}
+}
+
+/* ═══════════════════════════════════
+   THREE.JS
+═══════════════════════════════════ */
+const EARTH_R=6371;
+let scene,camera,renderer;
+let satellites=[],satSprites=[],orbitLines=[];
+let selectedSat=null,showOrbits=true;
+let activeGroups=new Set(['stations','weather','nav','starlink','science']);
+let searchQuery='';
+let isDragging=false,prevMouse={x:0,y:0};
+let sph={theta:.5,phi:1.15},tSph={theta:.5,phi:1.15};
+let zoom=3.8,tZoom=3.8;
+let autoRotate=true,lastInteract=0;
+const raycaster=new THREE.Raycaster();
+raycaster.params.Line={threshold:0.01};
+raycaster.params.Points={threshold:0.02};
+const mouse=new THREE.Vector2(-9,-9);
+
+function geoToVec3(lat,lon,altKm){
+  const r=1+altKm/EARTH_R;
+  const phi=(90-lat)*Math.PI/180;
+  const lam=lon*Math.PI/180;
+  return new THREE.Vector3(r*Math.sin(phi)*Math.sin(lam),r*Math.cos(phi),-r*Math.sin(phi)*Math.cos(lam));
+}
+
+
+/* ─── GROUND SITES: Mission Controls + Launch Sites ─── */
+const GROUND_SITES = [
+  // Launch Sites
+  {name:'Kennedy Space Center',    lat:28.57,  lon:-80.65,  type:'launch',  flag:'🚀'},
+  {name:'Cape Canaveral SFS',      lat:28.49,  lon:-80.58,  type:'launch',  flag:'🚀'},
+  {name:'Vandenberg SFB',          lat:34.74,  lon:-120.57, type:'launch',  flag:'🚀'},
+  {name:'Baikonur Cosmodrome',     lat:45.96,  lon:63.31,   type:'launch',  flag:'🚀'},
+  {name:'Plesetsk Cosmodrome',     lat:62.93,  lon:40.57,   type:'launch',  flag:'🚀'},
+  {name:'Jiuquan Launch Center',   lat:40.96,  lon:100.29,  type:'launch',  flag:'🚀'},
+  {name:'Xichang Launch Center',   lat:28.25,  lon:102.03,  type:'launch',  flag:'🚀'},
+  {name:'Wenchang Space Center',   lat:19.61,  lon:110.95,  type:'launch',  flag:'🚀'},
+  {name:'Tanegashima Space Center',lat:30.40,  lon:130.97,  type:'launch',  flag:'🚀'},
+  {name:'Satish Dhawan (ISRO)',    lat:13.73,  lon:80.24,   type:'launch',  flag:'🚀'},
+  {name:'Guiana Space Centre',     lat:5.24,   lon:-52.77,  type:'launch',  flag:'🚀'},
+  {name:'Mahia Launch Complex',    lat:-39.26, lon:177.86,  type:'launch',  flag:'🚀'},
+  {name:'Starbase (Boca Chica)',   lat:25.99,  lon:-97.16,  type:'launch',  flag:'🚀'},
+  // Mission Controls
+  {name:'JPL (NASA)',              lat:34.20,  lon:-118.17, type:'control', flag:'📡'},
+  {name:'Johnson Space Center',    lat:29.56,  lon:-95.09,  type:'control', flag:'📡'},
+  {name:'Goddard Space Flight Ctr',lat:39.00,  lon:-76.88,  type:'control', flag:'📡'},
+  {name:'ESA ESOC (Darmstadt)',    lat:49.87,  lon:8.62,    type:'control', flag:'📡'},
+  {name:'JAXA Tsukuba',            lat:36.11,  lon:140.09,  type:'control', flag:'📡'},
+  {name:'ISRO ISTRAC (Bangalore)', lat:13.02,  lon:77.57,   type:'control', flag:'📡'},
+  {name:'SpaceX HQ (Hawthorne)',   lat:33.92,  lon:-118.33, type:'control', flag:'📡'},
+  {name:'CNSA Beijing',            lat:39.91,  lon:116.39,  type:'control', flag:'📡'},
+  {name:'Roscosmos (Moscow)',      lat:55.76,  lon:37.62,   type:'control', flag:'📡'},
+];
+
+const groundMeshes = [];
+
+function addGroundSites(){
+  for(const site of GROUND_SITES){
+    const pos = geoToVec3(site.lat, site.lon, 0).multiplyScalar(1.005);
+
+    // Marker — small glowing sphere
+    const isLaunch = site.type === 'launch';
+    const col = isLaunch ? 0xffaa00 : 0x00d4ff;
+    const r   = isLaunch ? 0.007 : 0.006;
+
+    const mesh = new THREE.Mesh(
+      new THREE.SphereGeometry(r, 8, 8),
+      new THREE.MeshBasicMaterial({color: col})
+    );
+    mesh.position.copy(pos);
+    mesh.userData.site = site;
+    scene.add(mesh);
+    groundMeshes.push(mesh);
+
+    // Vertical spike
+    const spike = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.001, 0.001, isLaunch ? 0.04 : 0.03, 4),
+      new THREE.MeshBasicMaterial({color: col, transparent:true, opacity:0.6})
+    );
+    spike.position.copy(pos);
+    spike.lookAt(0,0,0);
+    spike.rotateX(Math.PI/2);
+    spike.translateY(-(isLaunch?0.02:0.015));
+    scene.add(spike);
+  }
+}
+
+function initScene(){
+  const wrap=document.getElementById('canvas-wrap');
+  scene=new THREE.Scene();
+  camera=new THREE.PerspectiveCamera(38,wrap.clientWidth/wrap.clientHeight,.01,1000);
+  renderer=new THREE.WebGLRenderer({canvas:document.getElementById('globe'),antialias:true,alpha:false});
+  renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+  renderer.setSize(wrap.clientWidth,wrap.clientHeight);
+  renderer.setClearColor(0x060a0d,1);
+  addStars();addGlobe();addGraticule();addCoastlines();
+  scene.add(new THREE.AmbientLight(0x334455,1.0));
+  const sun=new THREE.DirectionalLight(0x6699bb,0.8);sun.position.set(5,3,4);scene.add(sun);
+  window.addEventListener('resize',onResize);onResize();
+  addGroundSites();
+}
+
+function addStars(){
+  const N=6000,pos=new Float32Array(N*3);
+  for(let i=0;i<N*3;i+=3){
+    const r=90+Math.random()*20,th=Math.random()*Math.PI*2,ph=Math.acos(2*Math.random()-1);
+    pos[i]=r*Math.sin(ph)*Math.cos(th);pos[i+1]=r*Math.sin(ph)*Math.sin(th);pos[i+2]=r*Math.cos(ph);
+  }
+  const geo=new THREE.BufferGeometry();geo.setAttribute('position',new THREE.BufferAttribute(pos,3));
+  // Two sizes for depth
+  scene.add(new THREE.Points(geo,new THREE.PointsMaterial({color:0x8899aa,size:.08,transparent:true,opacity:.5})));
+  const geo2=new THREE.BufferGeometry();
+  const pos2=new Float32Array(500*3);
+  for(let i=0;i<500*3;i+=3){const r=88,th=Math.random()*Math.PI*2,ph=Math.acos(2*Math.random()-1);pos2[i]=r*Math.sin(ph)*Math.cos(th);pos2[i+1]=r*Math.sin(ph)*Math.sin(th);pos2[i+2]=r*Math.cos(ph);}
+  geo2.setAttribute('position',new THREE.BufferAttribute(pos2,3));
+  scene.add(new THREE.Points(geo2,new THREE.PointsMaterial({color:0xffffff,size:.18,transparent:true,opacity:.7})));
+}
+
+function addGlobe(){
+  // Dark ocean base
+  scene.add(new THREE.Mesh(new THREE.SphereGeometry(1,64,64),
+    new THREE.MeshPhongMaterial({color:0x060e18,emissive:0x030810,shininess:8})));
+  // Atmosphere rim
+  scene.add(new THREE.Mesh(new THREE.SphereGeometry(1.02,64,64),
+    new THREE.MeshBasicMaterial({color:0x0a2040,transparent:true,opacity:.08,side:THREE.BackSide})));
+  scene.add(new THREE.Mesh(new THREE.SphereGeometry(1.06,64,64),
+    new THREE.MeshBasicMaterial({color:0x001830,transparent:true,opacity:.04,side:THREE.BackSide})));
+}
+
+function addGraticule(){
+  const lm=new THREE.LineBasicMaterial({color:0x0d2035,transparent:true,opacity:.8});
+  const em=new THREE.LineBasicMaterial({color:0x102840,transparent:true,opacity:1});
+  const S=120,R=1.001;
+  for(let lat=-75;lat<=75;lat+=15){
+    const pts=[];for(let i=0;i<=S;i++)pts.push(geoToVec3(lat,(i/S)*360-180,0).multiplyScalar(R));
+    scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),lat===0?em:lm));
+  }
+  for(let lon=-180;lon<180;lon+=15){
+    const pts=[];for(let i=0;i<=S;i++)pts.push(geoToVec3(-90+(i/S)*180,lon,0).multiplyScalar(R));
+    scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),lm));
+  }
+}
+
+// Accurate continent outlines
+const COASTS=[
+[[-168,71.4],[-165,68.5],[-163.7,64.6],[-162,60.6],[-152,59.3],[-149,59.9],[-148.3,60.8],[-146.5,61.1],[-145,60.3],[-142,59.9],[-140,59.7],[-137.5,59.3],[-135.5,57],[-133.4,55.7],[-132,54.8],[-130.5,54.2],[-128.5,52.2],[-126.8,50.6],[-124.7,49],[-124.2,47.6],[-124.5,46.3],[-124.1,44.6],[-124.5,42.8],[-124.2,40.6],[-124,38],[-122.5,37.2],[-121.3,35.8],[-120.4,34.8],[-117.3,32.5],[-117.1,32.5],[-116,31],[-114.8,29.5],[-110,24],[-106.5,23],[-105.2,20.8],[-103.4,18.6],[-99.8,16.5],[-90.1,16],[-88,15.8],[-83.7,9.5],[-82.7,8.2],[-77.5,7.5]]
+};
+
+/* ═══════════════════════════════════
+   GROUP CONFIG
+═══════════════════════════════════ */
+const GROUPS={
+  stations:{ label:'SPACE STATIONS',   typeLabel:'Space Station / Crewed',          color:0x00e87a, hex:'#00e87a' },
+  weather: { label:'WEATHER',          typeLabel:'Meteorological Satellite',         color:0x00d4ff, hex:'#00d4ff' },
+  nav:     { label:'NAV / GNSS',       typeLabel:'Navigation / GNSS',               color:0xf5c842, hex:'#f5c842' },
+  starlink:{ label:'STARLINK',         typeLabel:'Commercial Broadband (SpaceX)',    color:0xf53d9e, hex:'#f53d9e' },
+  oneweb:  { label:'ONEWEB',           typeLabel:'Commercial Broadband (OneWeb)',    color:0x9b59f5, hex:'#9b59f5' },
+  science: { label:'SCIENCE / EO',     typeLabel:'Scientific / Earth Observation',  color:0xf57c20, hex:'#f57c20' },
+  debris:  { label:'DEBRIS',           typeLabel:'Space Debris / Rocket Body',      color:0xf53d3d, hex:'#f53d3d' },
+};
+
+function classifyOrbit(alt){
+  if(alt<2000)  return{label:'LEO',full:'Low Earth Orbit',    color:'#00e87a'};
+  if(alt<8000)  return{label:'MEO',full:'Medium Earth Orbit', color:'#f5c842'};
+  if(alt<40000) return{label:'GEO',full:'Geostationary Orbit',color:'#00d4ff'};
+  return              {label:'HEO',full:'High Earth Orbit',   color:'#f57c20'};
+}
+function parseIntdes(s){
+  if(!s||!s.trim())return{year:'—',launch:'—',piece:'—'};
+  s=s.trim();const yr2=parseInt(s.slice(0,2));
+  return{year:String(yr2>=57?1900+yr2:2000+yr2),launch:String(parseInt(s.slice(2,5))||'—'),piece:s.slice(5).trim()||'—'};
+}
+function epochFromSatrec(sr){
+  try{const y=sr.epochyr,yr=y<57?2000+y:1900+y;const d=new Date(Date.UTC(yr,0,1)+(sr.epochdays-1)*86400000);return d.toISOString().slice(0,10);}catch(e){return'—'}
+}
+
+/* ═══════════════════════════════════
+   THREE.JS
+═══════════════════════════════════ */
+const EARTH_R=6371;
+let scene,camera,renderer;
+let satellites=[],satSprites=[],orbitLines=[];
+let selectedSat=null,showOrbits=true;
+let activeGroups=new Set(['stations','weather','nav','starlink','science']);
+let searchQuery='';
+let isDragging=false,prevMouse={x:0,y:0};
+let sph={theta:.5,phi:1.15},tSph={theta:.5,phi:1.15};
+let zoom=3.8,tZoom=3.8;
+let autoRotate=true,lastInteract=0;
+const raycaster=new THREE.Raycaster();
+raycaster.params.Line={threshold:0.01};
+raycaster.params.Points={threshold:0.02};
+const mouse=new THREE.Vector2(-9,-9);
+
+function geoToVec3(lat,lon,altKm){
+  const r=1+altKm/EARTH_R;
+  const phi=(90-lat)*Math.PI/180;
+  const lam=lon*Math.PI/180;
+  return new THREE.Vector3(r*Math.sin(phi)*Math.sin(lam),r*Math.cos(phi),-r*Math.sin(phi)*Math.cos(lam));
+}
+
+
+/* ─── GROUND SITES: Mission Controls + Launch Sites ─── */
+const GROUND_SITES = [
+  // Launch Sites
+  {name:'Kennedy Space Center',    lat:28.57,  lon:-80.65,  type:'launch',  flag:'🚀'},
+  {name:'Cape Canaveral SFS',      lat:28.49,  lon:-80.58,  type:'launch',  flag:'🚀'},
+  {name:'Vandenberg SFB',          lat:34.74,  lon:-120.57, type:'launch',  flag:'🚀'},
+  {name:'Baikonur Cosmodrome',     lat:45.96,  lon:63.31,   type:'launch',  flag:'🚀'},
+  {name:'Plesetsk Cosmodrome',     lat:62.93,  lon:40.57,   type:'launch',  flag:'🚀'},
+  {name:'Jiuquan Launch Center',   lat:40.96,  lon:100.29,  type:'launch',  flag:'🚀'},
+  {name:'Xichang Launch Center',   lat:28.25,  lon:102.03,  type:'launch',  flag:'🚀'},
+  {name:'Wenchang Space Center',   lat:19.61,  lon:110.95,  type:'launch',  flag:'🚀'},
+  {name:'Tanegashima Space Center',lat:30.40,  lon:130.97,  type:'launch',  flag:'🚀'},
+  {name:'Satish Dhawan (ISRO)',    lat:13.73,  lon:80.24,   type:'launch',  flag:'🚀'},
+  {name:'Guiana Space Centre',     lat:5.24,   lon:-52.77,  type:'launch',  flag:'🚀'},
+  {name:'Mahia Launch Complex',    lat:-39.26, lon:177.86,  type:'launch',  flag:'🚀'},
+  {name:'Starbase (Boca Chica)',   lat:25.99,  lon:-97.16,  type:'launch',  flag:'🚀'},
+  // Mission Controls
+  {name:'JPL (NASA)',              lat:34.20,  lon:-118.17, type:'control', flag:'📡'},
+  {name:'Johnson Space Center',    lat:29.56,  lon:-95.09,  type:'control', flag:'📡'},
+  {name:'Goddard Space Flight Ctr',lat:39.00,  lon:-76.88,  type:'control', flag:'📡'},
+  {name:'ESA ESOC (Darmstadt)',    lat:49.87,  lon:8.62,    type:'control', flag:'📡'},
+  {name:'JAXA Tsukuba',            lat:36.11,  lon:140.09,  type:'control', flag:'📡'},
+  {name:'ISRO ISTRAC (Bangalore)', lat:13.02,  lon:77.57,   type:'control', flag:'📡'},
+  {name:'SpaceX HQ (Hawthorne)',   lat:33.92,  lon:-118.33, type:'control', flag:'📡'},
+  {name:'CNSA Beijing',            lat:39.91,  lon:116.39,  type:'control', flag:'📡'},
+  {name:'Roscosmos (Moscow)',      lat:55.76,  lon:37.62,   type:'control', flag:'📡'},
+];
+
+const groundMeshes = [];
+
+function addGroundSites(){
+  for(const site of GROUND_SITES){
+    const pos = geoToVec3(site.lat, site.lon, 0).multiplyScalar(1.005);
+
+    // Marker — small glowing sphere
+    const isLaunch = site.type === 'launch';
+    const col = isLaunch ? 0xffaa00 : 0x00d4ff;
+    const r   = isLaunch ? 0.007 : 0.006;
+
+    const mesh = new THREE.Mesh(
+      new THREE.SphereGeometry(r, 8, 8),
+      new THREE.MeshBasicMaterial({color: col})
+    );
+    mesh.position.copy(pos);
+    mesh.userData.site = site;
+    scene.add(mesh);
+    groundMeshes.push(mesh);
+
+    // Vertical spike
+    const spike = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.001, 0.001, isLaunch ? 0.04 : 0.03, 4),
+      new THREE.MeshBasicMaterial({color: col, transparent:true, opacity:0.6})
+    );
+    spike.position.copy(pos);
+    spike.lookAt(0,0,0);
+    spike.rotateX(Math.PI/2);
+    spike.translateY(-(isLaunch?0.02:0.015));
+    scene.add(spike);
+  }
+}
+
+function initScene(){
+  const wrap=document.getElementById('canvas-wrap');
+  scene=new THREE.Scene();
+  camera=new THREE.PerspectiveCamera(38,wrap.clientWidth/wrap.clientHeight,.01,1000);
+  renderer=new THREE.WebGLRenderer({canvas:document.getElementById('globe'),antialias:true,alpha:false});
+  renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+  renderer.setSize(wrap.clientWidth,wrap.clientHeight);
+  renderer.setClearColor(0x060a0d,1);
+  addStars();addGlobe();addGraticule();addCoastlines();
+  scene.add(new THREE.AmbientLight(0x334455,1.0));
+  const sun=new THREE.DirectionalLight(0x6699bb,0.8);sun.position.set(5,3,4);scene.add(sun);
+  window.addEventListener('resize',onResize);onResize();
+  addGroundSites();
+}
+
+function addStars(){
+  const N=6000,pos=new Float32Array(N*3);
+  for(let i=0;i<N*3;i+=3){
+    const r=90+Math.random()*20,th=Math.random()*Math.PI*2,ph=Math.acos(2*Math.random()-1);
+    pos[i]=r*Math.sin(ph)*Math.cos(th);pos[i+1]=r*Math.sin(ph)*Math.sin(th);pos[i+2]=r*Math.cos(ph);
+  }
+  const geo=new THREE.BufferGeometry();geo.setAttribute('position',new THREE.BufferAttribute(pos,3));
+  // Two sizes for depth
+  scene.add(new THREE.Points(geo,new THREE.PointsMaterial({color:0x8899aa,size:.08,transparent:true,opacity:.5})));
+  const geo2=new THREE.BufferGeometry();
+  const pos2=new Float32Array(500*3);
+  for(let i=0;i<500*3;i+=3){const r=88,th=Math.random()*Math.PI*2,ph=Math.acos(2*Math.random()-1);pos2[i]=r*Math.sin(ph)*Math.cos(th);pos2[i+1]=r*Math.sin(ph)*Math.sin(th);pos2[i+2]=r*Math.cos(ph);}
+  geo2.setAttribute('position',new THREE.BufferAttribute(pos2,3));
+  scene.add(new THREE.Points(geo2,new THREE.PointsMaterial({color:0xffffff,size:.18,transparent:true,opacity:.7})));
+}
+
+function addGlobe(){
+  // Dark ocean base
+  scene.add(new THREE.Mesh(new THREE.SphereGeometry(1,64,64),
+    new THREE.MeshPhongMaterial({color:0x060e18,emissive:0x030810,shininess:8})));
+  // Atmosphere rim
+  scene.add(new THREE.Mesh(new THREE.SphereGeometry(1.02,64,64),
+    new THREE.MeshBasicMaterial({color:0x0a2040,transparent:true,opacity:.08,side:THREE.BackSide})));
+  scene.add(new THREE.Mesh(new THREE.SphereGeometry(1.06,64,64),
+    new THREE.MeshBasicMaterial({color:0x001830,transparent:true,opacity:.04,side:THREE.BackSide})));
+}
+
+function addGraticule(){
+  const lm=new THREE.LineBasicMaterial({color:0x0d2035,transparent:true,opacity:.8});
+  const em=new THREE.LineBasicMaterial({color:0x102840,transparent:true,opacity:1});
+  const S=120,R=1.001;
+  for(let lat=-75;lat<=75;lat+=15){
+    const pts=[];for(let i=0;i<=S;i++)pts.push(geoToVec3(lat,(i/S)*360-180,0).multiplyScalar(R));
+    scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),lat===0?em:lm));
+  }
+  for(let lon=-180;lon<180;lon+=15){
+    const pts=[];for(let i=0;i<=S;i++)pts.push(geoToVec3(-90+(i/S)*180,lon,0).multiplyScalar(R));
+    scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),lm));
+  }
+}
+
+// Accurate continent outlines
+const COASTS=[
+[[-168,71.4],[-165,68.5],[-163.7,64.6],[-162,60.6],[-152,59.3],[-149,59.9],[-148.3,60.8],[-146.5,61.1],[-145,60.3],[-142,59.9],[-140,59.7],[-137.5,59.3],[-135.5,57],[-133.4,55.7],[-132,54.8],[-130.5,54.2],[-128.5,52.2],[-126.8,50.6],[-124.7,49],[-124.2,47.6],[-124.5,46.3],[-124.1,44.6],[-124.5,42.8],[-124.2,40.6],[-124,38],[-122.5,37.2],[-121.3,35.8],[-120.4,34.8],[-117.3,32.5],[-117.1,32.5],[-116,31],[-114.8,29.5],[-110,24],[-106.5,23],[-105.2,20.8],[-103.4,18.6],[-99.8,16.5],[-90.1,16],[-88,15.8],[-83.7,9.5],[-82.7,8.2],[-77.5,7.5]]
+};
+
+/* ═══════════════════════════════════
+   GROUP CONFIG
+═══════════════════════════════════ */
+const GROUPS={
+  stations:{ label:'SPACE STATIONS',   typeLabel:'Space Station / Crewed',          color:0x00e87a, hex:'#00e87a' },
+  weather: { label:'WEATHER',          typeLabel:'Meteorological Satellite',         color:0x00d4ff, hex:'#00d4ff' },
+  nav:     { label:'NAV / GNSS',       typeLabel:'Navigation / GNSS',               color:0xf5c842, hex:'#f5c842' },
+  starlink:{ label:'STARLINK',         typeLabel:'Commercial Broadband (SpaceX)',    color:0xf53d9e, hex:'#f53d9e' },
+  oneweb:  { label:'ONEWEB',           typeLabel:'Commercial Broadband (OneWeb)',    color:0x9b59f5, hex:'#9b59f5' },
+  science: { label:'SCIENCE / EO',     typeLabel:'Scientific / Earth Observation',  color:0xf57c20, hex:'#f57c20' },
+  debris:  { label:'DEBRIS',           typeLabel:'Space Debris / Rocket Body',      color:0xf53d3d, hex:'#f53d3d' },
+};
+
+function classifyOrbit(alt){
+  if(alt<2000)  return{label:'LEO',full:'Low Earth Orbit',    color:'#00e87a'};
+  if(alt<8000)  return{label:'MEO',full:'Medium Earth Orbit', color:'#f5c842'};
+  if(alt<40000) return{label:'GEO',full:'Geostationary Orbit',color:'#00d4ff'};
+  return              {label:'HEO',full:'High Earth Orbit',   color:'#f57c20'};
+}
+function parseIntdes(s){
+  if(!s||!s.trim())return{year:'—',launch:'—',piece:'—'};
+  s=s.trim();const yr2=parseInt(s.slice(0,2));
+  return{year:String(yr2>=57?1900+yr2:2000+yr2),launch:String(parseInt(s.slice(2,5))||'—'),piece:s.slice(5).trim()||'—'};
+}
+function epochFromSatrec(sr){
+  try{const y=sr.epochyr,yr=y<57?2000+y:1900+y;const d=new Date(Date.UTC(yr,0,1)+(sr.epochdays-1)*86400000);return d.toISOString().slice(0,10);}catch(e){return'—'}
+}
+
+/* ═══════════════════════════════════
+   THREE.JS
+═══════════════════════════════════ */
+const EARTH_R=6371;
+let scene,camera,renderer;
+let satellites=[],satSprites=[],orbitLines=[];
+let selectedSat=null,showOrbits=true;
+let activeGroups=new Set(['stations','weather','nav','starlink','science']);
+let searchQuery='';
+let isDragging=false,prevMouse={x:0,y:0};
+let sph={theta:.5,phi:1.15},tSph={theta:.5,phi:1.15};
+let zoom=3.8,tZoom=3.8;
+let autoRotate=true,lastInteract=0;
+const raycaster=new THREE.Raycaster();
+raycaster.params.Line={threshold:0.01};
+raycaster.params.Points={threshold:0.02};
+const mouse=new THREE.Vector2(-9,-9);
+
+function geoToVec3(lat,lon,altKm){
+  const r=1+altKm/EARTH_R;
+  const phi=(90-lat)*Math.PI/180;
+  const lam=lon*Math.PI/180;
+  return new THREE.Vector3(r*Math.sin(phi)*Math.sin(lam),r*Math.cos(phi),-r*Math.sin(phi)*Math.cos(lam));
+}
+
+
+/* ─── GROUND SITES: Mission Controls + Launch Sites ─── */
+const GROUND_SITES = [
+  // Launch Sites
+  {name:'Kennedy Space Center',    lat:28.57,  lon:-80.65,  type:'launch',  flag:'🚀'},
+  {name:'Cape Canaveral SFS',      lat:28.49,  lon:-80.58,  type:'launch',  flag:'🚀'},
+  {name:'Vandenberg SFB',          lat:34.74,  lon:-120.57, type:'launch',  flag:'🚀'},
+  {name:'Baikonur Cosmodrome',     lat:45.96,  lon:63.31,   type:'launch',  flag:'🚀'},
+  {name:'Plesetsk Cosmodrome',     lat:62.93,  lon:40.57,   type:'launch',  flag:'🚀'},
+  {name:'Jiuquan Launch Center',   lat:40.96,  lon:100.29,  type:'launch',  flag:'🚀'},
+  {name:'Xichang Launch Center',   lat:28.25,  lon:102.03,  type:'launch',  flag:'🚀'},
+  {name:'Wenchang Space Center',   lat:19.61,  lon:110.95,  type:'launch',  flag:'🚀'},
+  {name:'Tanegashima Space Center',lat:30.40,  lon:130.97,  type:'launch',  flag:'🚀'},
+  {name:'Satish Dhawan (ISRO)',    lat:13.73,  lon:80.24,   type:'launch',  flag:'🚀'},
+  {name:'Guiana Space Centre',     lat:5.24,   lon:-52.77,  type:'launch',  flag:'🚀'},
+  {name:'Mahia Launch Complex',    lat:-39.26, lon:177.86,  type:'launch',  flag:'🚀'},
+  {name:'Starbase (Boca Chica)',   lat:25.99,  lon:-97.16,  type:'launch',  flag:'🚀'},
+  // Mission Controls
+  {name:'JPL (NASA)',              lat:34.20,  lon:-118.17, type:'control', flag:'📡'},
+  {name:'Johnson Space Center',    lat:29.56,  lon:-95.09,  type:'control', flag:'📡'},
+  {name:'Goddard Space Flight Ctr',lat:39.00,  lon:-76.88,  type:'control', flag:'📡'},
+  {name:'ESA ESOC (Darmstadt)',    lat:49.87,  lon:8.62,    type:'control', flag:'📡'},
+  {name:'JAXA Tsukuba',            lat:36.11,  lon:140.09,  type:'control', flag:'📡'},
+  {name:'ISRO ISTRAC (Bangalore)', lat:13.02,  lon:77.57,   type:'control', flag:'📡'},
+  {name:'SpaceX HQ (Hawthorne)',   lat:33.92,  lon:-118.33, type:'control', flag:'📡'},
+  {name:'CNSA Beijing',            lat:39.91,  lon:116.39,  type:'control', flag:'📡'},
+  {name:'Roscosmos (Moscow)',      lat:55.76,  lon:37.62,   type:'control', flag:'📡'},
+];
+
+const groundMeshes = [];
+
+function addGroundSites(){
+  for(const site of GROUND_SITES){
+    const pos = geoToVec3(site.lat, site.lon, 0).multiplyScalar(1.005);
+
+    // Marker — small glowing sphere
+    const isLaunch = site.type === 'launch';
+    const col = isLaunch ? 0xffaa00 : 0x00d4ff;
+    const r   = isLaunch ? 0.007 : 0.006;
+
+    const mesh = new THREE.Mesh(
+      new THREE.SphereGeometry(r, 8, 8),
+      new THREE.MeshBasicMaterial({color: col})
+    );
+    mesh.position.copy(pos);
+    mesh.userData.site = site;
+    scene.add(mesh);
+    groundMeshes.push(mesh);
+
+    // Vertical spike
+    const spike = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.001, 0.001, isLaunch ? 0.04 : 0.03, 4),
+      new THREE.MeshBasicMaterial({color: col, transparent:true, opacity:0.6})
+    );
+    spike.position.copy(pos);
+    spike.lookAt(0,0,0);
+    spike.rotateX(Math.PI/2);
+    spike.translateY(-(isLaunch?0.02:0.015));
+    scene.add(spike);
+  }
+}
+
+function initScene(){
+  const wrap=document.getElementById('canvas-wrap');
+  scene=new THREE.Scene();
+  camera=new THREE.PerspectiveCamera(38,wrap.clientWidth/wrap.clientHeight,.01,1000);
+  renderer=new THREE.WebGLRenderer({canvas:document.getElementById('globe'),antialias:true,alpha:false});
+  renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+  renderer.setSize(wrap.clientWidth,wrap.clientHeight);
+  renderer.setClearColor(0x060a0d,1);
+  addStars();addGlobe();addGraticule();addCoastlines();
+  scene.add(new THREE.AmbientLight(0x334455,1.0));
+  const sun=new THREE.DirectionalLight(0x6699bb,0.8);sun.position.set(5,3,4);scene.add(sun);
+  window.addEventListener('resize',onResize);onResize();
+  addGroundSites();
+}
+
+function addStars(){
+  const N=6000,pos=new Float32Array(N*3);
+  for(let i=0;i<N*3;i+=3){
+    const r=90+Math.random()*20,th=Math.random()*Math.PI*2,ph=Math.acos(2*Math.random()-1);
+    pos[i]=r*Math.sin(ph)*Math.cos(th);pos[i+1]=r*Math.sin(ph)*Math.sin(th);pos[i+2]=r*Math.cos(ph);
+  }
+  const geo=new THREE.BufferGeometry();geo.setAttribute('position',new THREE.BufferAttribute(pos,3));
+  // Two sizes for depth
+  scene.add(new THREE.Points(geo,new THREE.PointsMaterial({color:0x8899aa,size:.08,transparent:true,opacity:.5})));
+  const geo2=new THREE.BufferGeometry();
+  const pos2=new Float32Array(500*3);
+  for(let i=0;i<500*3;i+=3){const r=88,th=Math.random()*Math.PI*2,ph=Math.acos(2*Math.random()-1);pos2[i]=r*Math.sin(ph)*Math.cos(th);pos2[i+1]=r*Math.sin(ph)*Math.sin(th);pos2[i+2]=r*Math.cos(ph);}
+  geo2.setAttribute('position',new THREE.BufferAttribute(pos2,3));
+  scene.add(new THREE.Points(geo2,new THREE.PointsMaterial({color:0xffffff,size:.18,transparent:true,opacity:.7})));
+}
+
+function addGlobe(){
+  // Dark ocean base
+  scene.add(new THREE.Mesh(new THREE.SphereGeometry(1,64,64),
+    new THREE.MeshPhongMaterial({color:0x060e18,emissive:0x030810,shininess:8})));
+  // Atmosphere rim
+  scene.add(new THREE.Mesh(new THREE.SphereGeometry(1.02,64,64),
+    new THREE.MeshBasicMaterial({color:0x0a2040,transparent:true,opacity:.08,side:THREE.BackSide})));
+  scene.add(new THREE.Mesh(new THREE.SphereGeometry(1.06,64,64),
+    new THREE.MeshBasicMaterial({color:0x001830,transparent:true,opacity:.04,side:THREE.BackSide})));
+}
+
+function addGraticule(){
+  const lm=new THREE.LineBasicMaterial({color:0x0d2035,transparent:true,opacity:.8});
+  const em=new THREE.LineBasicMaterial({color:0x102840,transparent:true,opacity:1});
+  const S=120,R=1.001;
+  for(let lat=-75;lat<=75;lat+=15){
+    const pts=[];for(let i=0;i<=S;i++)pts.push(geoToVec3(lat,(i/S)*360-180,0).multiplyScalar(R));
+    scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),lat===0?em:lm));
+  }
+  for(let lon=-180;lon<180;lon+=15){
+    const pts=[];for(let i=0;i<=S;i++)pts.push(geoToVec3(-90+(i/S)*180,lon,0).multiplyScalar(R));
+    scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),lm));
+  }
+}
+
+// Accurate continent outlines
+const COASTS=[
+[[-168,71.4],[-165,68.5],[-163.7,64.6],[-162,60.6],[-152,59.3],[-149,59.9],[-148.3,60.8],[-146.5,61.1],[-145,60.3],[-142,59.9],[-140,59.7],[-137.5,59.3],[-135.5,57],[-133.4,55.7],[-132,54.8],[-130.5,54.2],[-128.5,52.2],[-126.8,50.6],[-124.7,49],[-124.2,47.6],[-124.5,46.3],[-124.1,44.6],[-124.5,42.8],[-124.2,40.6],[-124,38],[-122.5,37.2],[-121.3,35.8],[-120.4,34.8],[-117.3,32.5],[-117.1,32.5],[-116,31],[-114.8,29.5],[-110,24],[-106.5,23],[-105.2,20.8],[-103.4,18.6],[-99.8,16.5],[-90.1,16],[-88,15.8],[-83.7,9.5],[-82.7,8.2],[-77.5,7.5]]
+};
+
+/* ═══════════════════════════════════
+   GROUP CONFIG
+═══════════════════════════════════ */
+const GROUPS={
+  stations:{ label:'SPACE STATIONS',   typeLabel:'Space Station / Crewed',          color:0x00e87a, hex:'#00e87a' },
+  weather: { label:'WEATHER',          typeLabel:'Meteorological Satellite',         color:0x00d4ff, hex:'#00d4ff' },
+  nav:     { label:'NAV / GNSS',       typeLabel:'Navigation / GNSS',               color:0xf5c842, hex:'#f5c842' },
+  starlink:{ label:'STARLINK',         typeLabel:'Commercial Broadband (SpaceX)',    color:0xf53d9e, hex:'#f53d9e' },
+  oneweb:  { label:'ONEWEB',           typeLabel:'Commercial Broadband (OneWeb)',    color:0x9b59f5, hex:'#9b59f5' },
+  science: { label:'SCIENCE / EO',     typeLabel:'Scientific / Earth Observation',  color:0xf57c20, hex:'#f57c20' },
+  debris:  { label:'DEBRIS',           typeLabel:'Space Debris / Rocket Body',      color:0xf53d3d, hex:'#f53d3d' },
+};
+
+function classifyOrbit(alt){
+  if(alt<2000)  return{label:'LEO',full:'Low Earth Orbit',    color:'#00e87a'};
+  if(alt<8000)  return{label:'MEO',full:'Medium Earth Orbit', color:'#f5c842'};
+  if(alt<40000) return{label:'GEO',full:'Geostationary Orbit',color:'#00d4ff'};
+  return              {label:'HEO',full:'High Earth Orbit',   color:'#f57c20'};
+}
+function parseIntdes(s){
+  if(!s||!s.trim())return{year:'—',launch:'—',piece:'—'};
+  s=s.trim();const yr2=parseInt(s.slice(0,2));
+  return{year:String(yr2>=57?1900+yr2:2000+yr2),launch:String(parseInt(s.slice(2,5))||'—'),piece:s.slice(5).trim()||'—'};
+}
+function epochFromSatrec(sr){
+  try{const y=sr.epochyr,yr=y<57?2000+y:1900+y;const d=new Date(Date.UTC(yr,0,1)+(sr.epochdays-1)*86400000);return d.toISOString().slice(0,10);}catch(e){return'—'}
+}
+
+/* ═══════════════════════════════════
+   THREE.JS
+═══════════════════════════════════ */
+const EARTH_R=6371;
+let scene,camera,renderer;
+let satellites=[],satSprites=[],orbitLines=[];
+let selectedSat=null,showOrbits=true;
+let activeGroups=new Set(['stations','weather','nav','starlink','science']);
+let searchQuery='';
+let isDragging=false,prevMouse={x:0,y:0};
+let sph={theta:.5,phi:1.15},tSph={theta:.5,phi:1.15};
+let zoom=3.8,tZoom=3.8;
+let autoRotate=true,lastInteract=0;
+const raycaster=new THREE.Raycaster();
+raycaster.params.Line={threshold:0.01};
+raycaster.params.Points={threshold:0.02};
+const mouse=new THREE.Vector2(-9,-9);
+
+function geoToVec3(lat,lon,altKm){
+  const r=1+altKm/EARTH_R;
+  const phi=(90-lat)*Math.PI/180;
+  const lam=lon*Math.PI/180;
+  return new THREE.Vector3(r*Math.sin(phi)*Math.sin(lam),r*Math.cos(phi),-r*Math.sin(phi)*Math.cos(lam));
+}
+
+
+/* ─── GROUND SITES: Mission Controls + Launch Sites ─── */
+const GROUND_SITES = [
+  // Launch Sites
+  {name:'Kennedy Space Center',    lat:28.57,  lon:-80.65,  type:'launch',  flag:'🚀'},
+  {name:'Cape Canaveral SFS',      lat:28.49,  lon:-80.58,  type:'launch',  flag:'🚀'},
+  {name:'Vandenberg SFB',          lat:34.74,  lon:-120.57, type:'launch',  flag:'🚀'},
+  {name:'Baikonur Cosmodrome',     lat:45.96,  lon:63.31,   type:'launch',  flag:'🚀'},
+  {name:'Plesetsk Cosmodrome',     lat:62.93,  lon:40.57,   type:'launch',  flag:'🚀'},
+  {name:'Jiuquan Launch Center',   lat:40.96,  lon:100.29,  type:'launch',  flag:'🚀'},
+  {name:'Xichang Launch Center',   lat:28.25,  lon:102.03,  type:'launch',  flag:'🚀'},
+  {name:'Wenchang Space Center',   lat:19.61,  lon:110.95,  type:'launch',  flag:'🚀'},
+  {name:'Tanegashima Space Center',lat:30.40,  lon:130.97,  type:'launch',  flag:'🚀'},
+  {name:'Satish Dhawan (ISRO)',    lat:13.73,  lon:80.24,   type:'launch',  flag:'🚀'},
+  {name:'Guiana Space Centre',     lat:5.24,   lon:-52.77,  type:'launch',  flag:'🚀'},
+  {name:'Mahia Launch Complex',    lat:-39.26, lon:177.86,  type:'launch',  flag:'🚀'},
+  {name:'Starbase (Boca Chica)',   lat:25.99,  lon:-97.16,  type:'launch',  flag:'🚀'},
+  // Mission Controls
+  {name:'JPL (NASA)',              lat:34.20,  lon:-118.17, type:'control', flag:'📡'},
+  {name:'Johnson Space Center',    lat:29.56,  lon:-95.09,  type:'control', flag:'📡'},
+  {name:'Goddard Space Flight Ctr',lat:39.00,  lon:-76.88,  type:'control', flag:'📡'},
+  {name:'ESA ESOC (Darmstadt)',    lat:49.87,  lon:8.62,    type:'control', flag:'📡'},
+  {name:'JAXA Tsukuba',            lat:36.11,  lon:140.09,  type:'control', flag:'📡'},
+  {name:'ISRO ISTRAC (Bangalore)', lat:13.02,  lon:77.57,   type:'control', flag:'📡'},
+  {name:'SpaceX HQ (Hawthorne)',   lat:33.92,  lon:-118.33, type:'control', flag:'📡'},
+  {name:'CNSA Beijing',            lat:39.91,  lon:116.39,  type:'control', flag:'📡'},
+  {name:'Roscosmos (Moscow)',      lat:55.76,  lon:37.62,   type:'control', flag:'📡'},
+];
+
+const groundMeshes = [];
+
+function addGroundSites(){
+  for(const site of GROUND_SITES){
+    const pos = geoToVec3(site.lat, site.lon, 0).multiplyScalar(1.005);
+
+    // Marker — small glowing sphere
+    const isLaunch = site.type === 'launch';
+    const col = isLaunch ? 0xffaa00 : 0x00d4ff;
+    const r   = isLaunch ? 0.007 : 0.006;
+
+    const mesh = new THREE.Mesh(
+      new THREE.SphereGeometry(r, 8, 8),
+      new THREE.MeshBasicMaterial({color: col})
+    );
+    mesh.position.copy(pos);
+    mesh.userData.site = site;
+    scene.add(mesh);
+    groundMeshes.push(mesh);
+
+    // Vertical spike
+    const spike = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.001, 0.001, isLaunch ? 0.04 : 0.03, 4),
+      new THREE.MeshBasicMaterial({color: col, transparent:true, opacity:0.6})
+    );
+    spike.position.copy(pos);
+    spike.lookAt(0,0,0);
+    spike.rotateX(Math.PI/2);
+    spike.translateY(-(isLaunch?0.02:0.015));
+    scene.add(spike);
+  }
+}
+
+function initScene(){
+  const wrap=document.getElementById('canvas-wrap');
+  scene=new THREE.Scene();
+  camera=new THREE.PerspectiveCamera(38,wrap.clientWidth/wrap.clientHeight,.01,1000);
+  renderer=new THREE.WebGLRenderer({canvas:document.getElementById('globe'),antialias:true,alpha:false});
+  renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+  renderer.setSize(wrap.clientWidth,wrap.clientHeight);
+  renderer.setClearColor(0x060a0d,1);
+  addStars();addGlobe();addGraticule();addCoastlines();
+  scene.add(new THREE.AmbientLight(0x334455,1.0));
+  const sun=new THREE.DirectionalLight(0x6699bb,0.8);sun.position.set(5,3,4);scene.add(sun);
+  window.addEventListener('resize',onResize);onResize();
+  addGroundSites();
+}
+
+function addStars(){
+  const N=6000,pos=new Float32Array(N*3);
+  for(let i=0;i<N*3;i+=3){
+    const r=90+Math.random()*20,th=Math.random()*Math.PI*2,ph=Math.acos(2*Math.random()-1);
+    pos[i]=r*Math.sin(ph)*Math.cos(th);pos[i+1]=r*Math.sin(ph)*Math.sin(th);pos[i+2]=r*Math.cos(ph);
+  }
+  const geo=new THREE.BufferGeometry();geo.setAttribute('position',new THREE.BufferAttribute(pos,3));
+  // Two sizes for depth
+  scene.add(new THREE.Points(geo,new THREE.PointsMaterial({color:0x8899aa,size:.08,transparent:true,opacity:.5})));
+  const geo2=new THREE.BufferGeometry();
+  const pos2=new Float32Array(500*3);
+  for(let i=0;i<500*3;i+=3){const r=88,th=Math.random()*Math.PI*2,ph=Math.acos(2*Math.random()-1);pos2[i]=r*Math.sin(ph)*Math.cos(th);pos2[i+1]=r*Math.sin(ph)*Math.sin(th);pos2[i+2]=r*Math.cos(ph);}
+  geo2.setAttribute('position',new THREE.BufferAttribute(pos2,3));
+  scene.add(new THREE.Points(geo2,new THREE.PointsMaterial({color:0xffffff,size:.18,transparent:true,opacity:.7})));
+}
+
+function addGlobe(){
+  // Dark ocean base
+  scene.add(new THREE.Mesh(new THREE.SphereGeometry(1,64,64),
+    new THREE.MeshPhongMaterial({color:0x060e18,emissive:0x030810,shininess:8})));
+  // Atmosphere rim
+  scene.add(new THREE.Mesh(new THREE.SphereGeometry(1.02,64,64),
+    new THREE.MeshBasicMaterial({color:0x0a2040,transparent:true,opacity:.08,side:THREE.BackSide})));
+  scene.add(new THREE.Mesh(new THREE.SphereGeometry(1.06,64,64),
+    new THREE.MeshBasicMaterial({color:0x001830,transparent:true,opacity:.04,side:THREE.BackSide})));
+}
+
+function addGraticule(){
+  const lm=new THREE.LineBasicMaterial({color:0x0d2035,transparent:true,opacity:.8});
+  const em=new THREE.LineBasicMaterial({color:0x102840,transparent:true,opacity:1});
+  const S=120,R=1.001;
+  for(let lat=-75;lat<=75;lat+=15){
+    const pts=[];for(let i=0;i<=S;i++)pts.push(geoToVec3(lat,(i/S)*360-180,0).multiplyScalar(R));
+    scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),lat===0?em:lm));
+  }
+  for(let lon=-180;lon<180;lon+=15){
+    const pts=[];for(let i=0;i<=S;i++)pts.push(geoToVec3(-90+(i/S)*180,lon,0).multiplyScalar(R));
+    scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),lm));
+  }
+}
+
+// Accurate continent outlines
+const COASTS=[
+[[-168,71.4],[-165,68.5],[-163.7,64.6],[-162,60.6],[-152,59.3],[-149,59.9],[-148.3,60.8],[-146.5,61.1],[-145,60.3],[-142,59.9],[-140,59.7],[-137.5,59.3],[-135.5,57],[-133.4,55.7],[-132,54.8],[-130.5,54.2],[-128.5,52.2],[-126.8,50.6],[-124.7,49],[-124.2,47.6],[-124.5,46.3],[-124.1,44.6],[-124.5,42.8],[-124.2,40.6],[-124,38],[-122.5,37.2],[-121.3,35.8],[-120.4,34.8],[-117.3,32.5],[-117.1,32.5],[-116,31],[-114.8,29.5],[-110,24],[-106.5,23],[-105.2,20.8],[-103.4,18.6],[-99.8,16.5],[-90.1,16],[-88,15.8],[-83.7,9.5],[-82.7,8.2],[-77.5,7.5]]
+};
+
+/* ═══════════════════════════════════
+   GROUP CONFIG
+═══════════════════════════════════ */
+const GROUPS={
+  stations:{ label:'SPACE STATIONS',   typeLabel:'Space Station / Crewed',          color:0x00e87a, hex:'#00e87a' },
+  weather: { label:'WEATHER',          typeLabel:'Meteorological Satellite',         color:0x00d4ff, hex:'#00d4ff' },
+  nav:     { label:'NAV / GNSS',       typeLabel:'Navigation / GNSS',               color:0xf5c842, hex:'#f5c842' },
+  starlink:{ label:'STARLINK',         typeLabel:'Commercial Broadband (SpaceX)',    color:0xf53d9e, hex:'#f53d9e' },
+  oneweb:  { label:'ONEWEB',           typeLabel:'Commercial Broadband (OneWeb)',    color:0x9b59f5, hex:'#9b59f5' },
+  science: { label:'SCIENCE / EO',     typeLabel:'Scientific / Earth Observation',  color:0xf57c20, hex:'#f57c20' },
+  debris:  { label:'DEBRIS',           typeLabel:'Space Debris / Rocket Body',      color:0xf53d3d, hex:'#f53d3d' },
+};
+
+function classifyOrbit(alt){
+  if(alt<2000)  return{label:'LEO',full:'Low Earth Orbit',    color:'#00e87a'};
+  if(alt<8000)  return{label:'MEO',full:'Medium Earth Orbit', color:'#f5c842'};
+  if(alt<40000) return{label:'GEO',full:'Geostationary Orbit',color:'#00d4ff'};
+  return              {label:'HEO',full:'High Earth Orbit',   color:'#f57c20'};
+}
+function parseIntdes(s){
+  if(!s||!s.trim())return{year:'—',launch:'—',piece:'—'};
+  s=s.trim();const yr2=parseInt(s.slice(0,2));
+  return{year:String(yr2>=57?1900+yr2:2000+yr2),launch:String(parseInt(s.slice(2,5))||'—'),piece:s.slice(5).trim()||'—'};
+}
+function epochFromSatrec(sr){
+  try{const y=sr.epochyr,yr=y<57?2000+y:1900+y;const d=new Date(Date.UTC(yr,0,1)+(sr.epochdays-1)*86400000);return d.toISOString().slice(0,10);}catch(e){return'—'}
+}
+
+/* ═══════════════════════════════════
+   THREE.JS
+═══════════════════════════════════ */
+const EARTH_R=6371;
+let scene,camera,renderer;
+let satellites=[],satSprites=[],orbitLines=[];
+let selectedSat=null,showOrbits=true;
+let activeGroups=new Set(['stations','weather','nav','starlink','science']);
+let searchQuery='';
+let isDragging=false,prevMouse={x:0,y:0};
+let sph={theta:.5,phi:1.15},tSph={theta:.5,phi:1.15};
+let zoom=3.8,tZoom=3.8;
+let autoRotate=true,lastInteract=0;
+const raycaster=new THREE.Raycaster();
+raycaster.params.Line={threshold:0.01};
+raycaster.params.Points={threshold:0.02};
+const mouse=new THREE.Vector2(-9,-9);
+
+function geoToVec3(lat,lon,altKm){
+  const r=1+altKm/EARTH_R;
+  const phi=(90-lat)*Math.PI/180;
+  const lam=lon*Math.PI/180;
+  return new THREE.Vector3(r*Math.sin(phi)*Math.sin(lam),r*Math.cos(phi),-r*Math.sin(phi)*Math.cos(lam));
+}
+
+
+/* ─── GROUND SITES: Mission Controls + Launch Sites ─── */
+const GROUND_SITES = [
+  // Launch Sites
+  {name:'Kennedy Space Center',    lat:28.57,  lon:-80.65,  type:'launch',  flag:'🚀'},
+  {name:'Cape Canaveral SFS',      lat:28.49,  lon:-80.58,  type:'launch',  flag:'🚀'},
+  {name:'Vandenberg SFB',          lat:34.74,  lon:-120.57, type:'launch',  flag:'🚀'},
+  {name:'Baikonur Cosmodrome',     lat:45.96,  lon:63.31,   type:'launch',  flag:'🚀'},
+  {name:'Plesetsk Cosmodrome',     lat:62.93,  lon:40.57,   type:'launch',  flag:'🚀'},
+  {name:'Jiuquan Launch Center',   lat:40.96,  lon:100.29,  type:'launch',  flag:'🚀'},
+  {name:'Xichang Launch Center',   lat:28.25,  lon:102.03,  type:'launch',  flag:'🚀'},
+  {name:'Wenchang Space Center',   lat:19.61,  lon:110.95,  type:'launch',  flag:'🚀'},
+  {name:'Tanegashima Space Center',lat:30.40,  lon:130.97,  type:'launch',  flag:'🚀'},
+  {name:'Satish Dhawan (ISRO)',    lat:13.73,  lon:80.24,   type:'launch',  flag:'🚀'},
+  {name:'Guiana Space Centre',     lat:5.24,   lon:-52.77,  type:'launch',  flag:'🚀'},
+  {name:'Mahia Launch Complex',    lat:-39.26, lon:177.86,  type:'launch',  flag:'🚀'},
+  {name:'Starbase (Boca Chica)',   lat:25.99,  lon:-97.16,  type:'launch',  flag:'🚀'},
+  // Mission Controls
+  {name:'JPL (NASA)',              lat:34.20,  lon:-118.17, type:'control', flag:'📡'},
+  {name:'Johnson Space Center',    lat:29.56,  lon:-95.09,  type:'control', flag:'📡'},
+  {name:'Goddard Space Flight Ctr',lat:39.00,  lon:-76.88,  type:'control', flag:'📡'},
+  {name:'ESA ESOC (Darmstadt)',    lat:49.87,  lon:8.62,    type:'control', flag:'📡'},
+  {name:'JAXA Tsukuba',            lat:36.11,  lon:140.09,  type:'control', flag:'📡'},
+  {name:'ISRO ISTRAC (Bangalore)', lat:13.02,  lon:77.57,   type:'control', flag:'📡'},
+  {name:'SpaceX HQ (Hawthorne)',   lat:33.92,  lon:-118.33, type:'control', flag:'📡'},
+  {name:'CNSA Beijing',            lat:39.91,  lon:116.39,  type:'control', flag:'📡'},
+  {name:'Roscosmos (Moscow)',      lat:55.76,  lon:37.62,   type:'control', flag:'📡'},
+];
+
+const groundMeshes = [];
+
+function addGroundSites(){
+  for(const site of GROUND_SITES){
+    const pos = geoToVec3(site.lat, site.lon, 0).multiplyScalar(1.005);
+
+    // Marker — small glowing sphere
+    const isLaunch = site.type === 'launch';
+    const col = isLaunch ? 0xffaa00 : 0x00d4ff;
+    const r   = isLaunch ? 0.007 : 0.006;
+
+    const mesh = new THREE.Mesh(
+      new THREE.SphereGeometry(r, 8, 8),
+      new THREE.MeshBasicMaterial({color: col})
+    );
+    mesh.position.copy(pos);
+    mesh.userData.site = site;
+    scene.add(mesh);
+    groundMeshes.push(mesh);
+
+    // Vertical spike
+    const spike = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.001, 0.001, isLaunch ? 0.04 : 0.03, 4),
+      new THREE.MeshBasicMaterial({color: col, transparent:true, opacity:0.6})
+    );
+    spike.position.copy(pos);
+    spike.lookAt(0,0,0);
+    spike.rotateX(Math.PI/2);
+    spike.translateY(-(isLaunch?0.02:0.015));
+    scene.add(spike);
+  }
+}
+
+function initScene(){
+  const wrap=document.getElementById('canvas-wrap');
+  scene=new THREE.Scene();
+  camera=new THREE.PerspectiveCamera(38,wrap.clientWidth/wrap.clientHeight,.01,1000);
+  renderer=new THREE.WebGLRenderer({canvas:document.getElementById('globe'),antialias:true,alpha:false});
+  renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+  renderer.setSize(wrap.clientWidth,wrap.clientHeight);
+  renderer.setClearColor(0x060a0d,1);
+  addStars();addGlobe();addGraticule();addCoastlines();
+  scene.add(new THREE.AmbientLight(0x334455,1.0));
+  const sun=new THREE.DirectionalLight(0x6699bb,0.8);sun.position.set(5,3,4);scene.add(sun);
+  window.addEventListener('resize',onResize);onResize();
+  addGroundSites();
+}
+
+function addStars(){
+  const N=6000,pos=new Float32Array(N*3);
+  for(let i=0;i<N*3;i+=3){
+    const r=90+Math.random()*20,th=Math.random()*Math.PI*2,ph=Math.acos(2*Math.random()-1);
+    pos[i]=r*Math.sin(ph)*Math.cos(th);pos[i+1]=r*Math.sin(ph)*Math.sin(th);pos[i+2]=r*Math.cos(ph);
+  }
+  const geo=new THREE.BufferGeometry();geo.setAttribute('position',new THREE.BufferAttribute(pos,3));
+  // Two sizes for depth
+  scene.add(new THREE.Points(geo,new THREE.PointsMaterial({color:0x8899aa,size:.08,transparent:true,opacity:.5})));
+  const geo2=new THREE.BufferGeometry();
+  const pos2=new Float32Array(500*3);
+  for(let i=0;i<500*3;i+=3){const r=88,th=Math.random()*Math.PI*2,ph=Math.acos(2*Math.random()-1);pos2[i]=r*Math.sin(ph)*Math.cos(th);pos2[i+1]=r*Math.sin(ph)*Math.sin(th);pos2[i+2]=r*Math.cos(ph);}
+  geo2.setAttribute('position',new THREE.BufferAttribute(pos2,3));
+  scene.add(new THREE.Points(geo2,new THREE.PointsMaterial({color:0xffffff,size:.18,transparent:true,opacity:.7})));
+}
+
+function addGlobe(){
+  // Dark ocean base
+  scene.add(new THREE.Mesh(new THREE.SphereGeometry(1,64,64),
+    new THREE.MeshPhongMaterial({color:0x060e18,emissive:0x030810,shininess:8})));
+  // Atmosphere rim
+  scene.add(new THREE.Mesh(new THREE.SphereGeometry(1.02,64,64),
+    new THREE.MeshBasicMaterial({color:0x0a2040,transparent:true,opacity:.08,side:THREE.BackSide})));
+  scene.add(new THREE.Mesh(new THREE.SphereGeometry(1.06,64,64),
+    new THREE.MeshBasicMaterial({color:0x001830,transparent:true,opacity:.04,side:THREE.BackSide})));
+}
+
+function addGraticule(){
+  const lm=new THREE.LineBasicMaterial({color:0x0d2035,transparent:true,opacity:.8});
+  const em=new THREE.LineBasicMaterial({color:0x102840,transparent:true,opacity:1});
+  const S=120,R=1.001;
+  for(let lat=-75;lat<=75;lat+=15){
+    const pts=[];for(let i=0;i<=S;i++)pts.push(geoToVec3(lat,(i/S)*360-180,0).multiplyScalar(R));
+    scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),lat===0?em:lm));
+  }
+  for(let lon=-180;lon<180;lon+=15){
+    const pts=[];for(let i=0;i<=S;i++)pts.push(geoToVec3(-90+(i/S)*180,lon,0).multiplyScalar(R));
+    scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),lm));
+  }
+}
+
+// Accurate continent outlines
+const COASTS=[
+[[-168,71.4],[-165,68.5],[-163.7,64.6],[-162,60.6],[-152,59.3],[-149,59.9],[-148.3,60.8],[-146.5,61.1],[-145,60.3],[-142,59.9],[-140,59.7],[-137.5,59.3],[-135.5,57],[-133.4,55.7],[-132,54.8],[-130.5,54.2],[-128.5,52.2],[-126.8,50.6],[-124.7,49],[-124.2,47.6],[-124.5,46.3],[-124.1,44.6],[-124.5,42.8],[-124.2,40.6],[-124,38],[-122.5,37.2],[-121.3,35.8],[-120.4,34.8],[-117.3,32.5],[-117.1,32.5],[-116,31],[-114.8,29.5],[-110,24],[-106.5,23],[-105.2,20.8],[-103.4,18.6],[-99.8,16.5],[-90.1,16],[-88,15.8],[-83.7,9.5],[-82.7,8.2],[-77.5,7.5]]
+};
+
+/* ═══════════════════════════════════
+   GROUP CONFIG
+═══════════════════════════════════ */
+const GROUPS={
+  stations:{ label:'SPACE STATIONS',   typeLabel:'Space Station / Crewed',          color:0x00e87a, hex:'#00e87a' },
+  weather: { label:'WEATHER',          typeLabel:'Meteorological Satellite',         color:0x00d4ff, hex:'#00d4ff' },
+  nav:     { label:'NAV / GNSS',       typeLabel:'Navigation / GNSS',               color:0xf5c842, hex:'#f5c842' },
+  starlink:{ label:'STARLINK',         typeLabel:'Commercial Broadband (SpaceX)',    color:0xf53d9e, hex:'#f53d9e' },
+  oneweb:  { label:'ONEWEB',           typeLabel:'Commercial Broadband (OneWeb)',    color:0x9b59f5, hex:'#9b59f5' },
+  science: { label:'SCIENCE / EO',     typeLabel:'Scientific / Earth Observation',  color:0xf57c20, hex:'#f57c20' },
+  debris:  { label:'DEBRIS',           typeLabel:'Space Debris / Rocket Body',      color:0xf53d3d, hex:'#f53d3d' },
+};
+
+function classifyOrbit(alt){
+  if(alt<2000)  return{label:'LEO',full:'Low Earth Orbit',    color:'#00e87a'};
+  if(alt<8000)  return{label:'MEO',full:'Medium Earth Orbit', color:'#f5c842'};
+  if(alt<40000) return{label:'GEO',full:'Geostationary Orbit',color:'#00d4ff'};
+  return              {label:'HEO',full:'High Earth Orbit',   color:'#f57c20'};
+}
+function parseIntdes(s){
+  if(!s||!s.trim())return{year:'—',launch:'—',piece:'—'};
+  s=s.trim();const yr2=parseInt(s.slice(0,2));
+  return{year:String(yr2>=57?1900+yr2:2000+yr2),launch:String(parseInt(s.slice(2,5))||'—'),piece:s.slice(5).trim()||'—'};
+}
+function epochFromSatrec(sr){
+  try{const y=sr.epochyr,yr=y<57?2000+y:1900+y;const d=new Date(Date.UTC(yr,0,1)+(sr.epochdays-1)*86400000);return d.toISOString().slice(0,10);}catch(e){return'—'}
+}
+
+/* ═══════════════════════════════════
+   THREE.JS
+═══════════════════════════════════ */
+const EARTH_R=6371;
+let scene,camera,renderer;
+let satellites=[],satSprites=[],orbitLines=[];
+let selectedSat=null,showOrbits=true;
+let activeGroups=new Set(['stations','weather','nav','starlink','science']);
+let searchQuery='';
+let isDragging=false,prevMouse={x:0,y:0};
+let sph={theta:.5,phi:1.15},tSph={theta:.5,phi:1.15};
+let zoom=3.8,tZoom=3.8;
+let autoRotate=true,lastInteract=0;
+const raycaster=new THREE.Raycaster();
+raycaster.params.Line={threshold:0.01};
+raycaster.params.Points={threshold:0.02};
+const mouse=new THREE.Vector2(-9,-9);
+
+function geoToVec3(lat,lon,altKm){
+  const r=1+altKm/EARTH_R;
+  const phi=(90-lat)*Math.PI/180;
+  const lam=lon*Math.PI/180;
+  return new THREE.Vector3(r*Math.sin(phi)*Math.sin(lam),r*Math.cos(phi),-r*Math.sin(phi)*Math.cos(lam));
+}
+
+
+/* ─── GROUND SITES: Mission Controls + Launch Sites ─── */
+const GROUND_SITES = [
+  // Launch Sites
+  {name:'Kennedy Space Center',    lat:28.57,  lon:-80.65,  type:'launch',  flag:'🚀'},
+  {name:'Cape Canaveral SFS',      lat:28.49,  lon:-80.58,  type:'launch',  flag:'🚀'},
+  {name:'Vandenberg SFB',          lat:34.74,  lon:-120.57, type:'launch',  flag:'🚀'},
+  {name:'Baikonur Cosmodrome',     lat:45.96,  lon:63.31,   type:'launch',  flag:'🚀'},
+  {name:'Plesetsk Cosmodrome',     lat:62.93,  lon:40.57,   type:'launch',  flag:'🚀'},
+  {name:'Jiuquan Launch Center',   lat:40.96,  lon:100.29,  type:'launch',  flag:'🚀'},
+  {name:'Xichang Launch Center',   lat:28.25,  lon:102.03,  type:'launch',  flag:'🚀'},
+  {name:'Wenchang Space Center',   lat:19.61,  lon:110.95,  type:'launch',  flag:'🚀'},
+  {name:'Tanegashima Space Center',lat:30.40,  lon:130.97,  type:'launch',  flag:'🚀'},
+  {name:'Satish Dhawan (ISRO)',    lat:13.73,  lon:80.24,   type:'launch',  flag:'🚀'},
+  {name:'Guiana Space Centre',     lat:5.24,   lon:-52.77,  type:'launch',  flag:'🚀'},
+  {name:'Mahia Launch Complex',    lat:-39.26, lon:177.86,  type:'launch',  flag:'🚀'},
+  {name:'Starbase (Boca Chica)',   lat:25.99,  lon:-97.16,  type:'launch',  flag:'🚀'},
+  // Mission Controls
+  {name:'JPL (NASA)',              lat:34.20,  lon:-118.17, type:'control', flag:'📡'},
+  {name:'Johnson Space Center',    lat:29.56,  lon:-95.09,  type:'control', flag:'📡'},
+  {name:'Goddard Space Flight Ctr',lat:39.00,  lon:-76.88,  type:'control', flag:'📡'},
+  {name:'ESA ESOC (Darmstadt)',    lat:49.87,  lon:8.62,    type:'control', flag:'📡'},
+  {name:'JAXA Tsukuba',            lat:36.11,  lon:140.09,  type:'control', flag:'📡'},
+  {name:'ISRO ISTRAC (Bangalore)', lat:13.02,  lon:77.57,   type:'control', flag:'📡'},
+  {name:'SpaceX HQ (Hawthorne)',   lat:33.92,  lon:-118.33, type:'control', flag:'📡'},
+  {name:'CNSA Beijing',            lat:39.91,  lon:116.39,  type:'control', flag:'📡'},
+  {name:'Roscosmos (Moscow)',      lat:55.76,  lon:37.62,   type:'control', flag:'📡'},
+];
+
+const groundMeshes = [];
+
+function addGroundSites(){
+  for(const site of GROUND_SITES){
+    const pos = geoToVec3(site.lat, site.lon, 0).multiplyScalar(1.005);
+
+    // Marker — small glowing sphere
+    const isLaunch = site.type === 'launch';
+    const col = isLaunch ? 0xffaa00 : 0x00d4ff;
+    const r   = isLaunch ? 0.007 : 0.006;
+
+    const mesh = new THREE.Mesh(
+      new THREE.SphereGeometry(r, 8, 8),
+      new THREE.MeshBasicMaterial({color: col})
+    );
+    mesh.position.copy(pos);
+    mesh.userData.site = site;
+    scene.add(mesh);
+    groundMeshes.push(mesh);
+
+    // Vertical spike
+    const spike = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.001, 0.001, isLaunch ? 0.04 : 0.03, 4),
+      new THREE.MeshBasicMaterial({color: col, transparent:true, opacity:0.6})
+    );
+    spike.position.copy(pos);
+    spike.lookAt(0,0,0);
+    spike.rotateX(Math.PI/2);
+    spike.translateY(-(isLaunch?0.02:0.015));
+    scene.add(spike);
+  }
+}
+
+function initScene(){
+  const wrap=document.getElementById('canvas-wrap');
+  scene=new THREE.Scene();
+  camera=new THREE.PerspectiveCamera(38,wrap.clientWidth/wrap.clientHeight,.01,1000);
+  renderer=new THREE.WebGLRenderer({canvas:document.getElementById('globe'),antialias:true,alpha:false});
+  renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+  renderer.setSize(wrap.clientWidth,wrap.clientHeight);
+  renderer.setClearColor(0x060a0d,1);
+  addStars();addGlobe();addGraticule();addCoastlines();
+  scene.add(new THREE.AmbientLight(0x334455,1.0));
+  const sun=new THREE.DirectionalLight(0x6699bb,0.8);sun.position.set(5,3,4);scene.add(sun);
+  window.addEventListener('resize',onResize);onResize();
+  addGroundSites();
+}
+
+function addStars(){
+  const N=6000,pos=new Float32Array(N*3);
+  for(let i=0;i<N*3;i+=3){
+    const r=90+Math.random()*20,th=Math.random()*Math.PI*2,ph=Math.acos(2*Math.random()-1);
+    pos[i]=r*Math.sin(ph)*Math.cos(th);pos[i+1]=r*Math.sin(ph)*Math.sin(th);pos[i+2]=r*Math.cos(ph);
+  }
+  const geo=new THREE.BufferGeometry();geo.setAttribute('position',new THREE.BufferAttribute(pos,3));
+  // Two sizes for depth
+  scene.add(new THREE.Points(geo,new THREE.PointsMaterial({color:0x8899aa,size:.08,transparent:true,opacity:.5})));
+  const geo2=new THREE.BufferGeometry();
+  const pos2=new Float32Array(500*3);
+  for(let i=0;i<500*3;i+=3){const r=88,th=Math.random()*Math.PI*2,ph=Math.acos(2*Math.random()-1);pos2[i]=r*Math.sin(ph)*Math.cos(th);pos2[i+1]=r*Math.sin(ph)*Math.sin(th);pos2[i+2]=r*Math.cos(ph);}
+  geo2.setAttribute('position',new THREE.BufferAttribute(pos2,3));
+  scene.add(new THREE.Points(geo2,new THREE.PointsMaterial({color:0xffffff,size:.18,transparent:true,opacity:.7})));
+}
+
+function addGlobe(){
+  // Dark ocean base
+  scene.add(new THREE.Mesh(new THREE.SphereGeometry(1,64,64),
+    new THREE.MeshPhongMaterial({color:0x060e18,emissive:0x030810,shininess:8})));
+  // Atmosphere rim
+  scene.add(new THREE.Mesh(new THREE.SphereGeometry(1.02,64,64),
+    new THREE.MeshBasicMaterial({color:0x0a2040,transparent:true,opacity:.08,side:THREE.BackSide})));
+  scene.add(new THREE.Mesh(new THREE.SphereGeometry(1.06,64,64),
+    new THREE.MeshBasicMaterial({color:0x001830,transparent:true,opacity:.04,side:THREE.BackSide})));
+}
+
+function addGraticule(){
+  const lm=new THREE.LineBasicMaterial({color:0x0d2035,transparent:true,opacity:.8});
+  const em=new THREE.LineBasicMaterial({color:0x102840,transparent:true,opacity:1});
+  const S=120,R=1.001;
+  for(let lat=-75;lat<=75;lat+=15){
+    const pts=[];for(let i=0;i<=S;i++)pts.push(geoToVec3(lat,(i/S)*360-180,0).multiplyScalar(R));
+    scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),lat===0?em:lm));
+  }
+  for(let lon=-180;lon<180;lon+=15){
+    const pts=[];for(let i=0;i<=S;i++)pts.push(geoToVec3(-90+(i/S)*180,lon,0).multiplyScalar(R));
+    scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),lm));
+  }
+}
+
+// Accurate continent outlines
+const COASTS=[
+[[-168,71.4],[-165,68.5],[-163.7,64.6],[-162,60.6],[-152,59.3],[-149,59.9],[-148.3,60.8],[-146.5,61.1],[-145,60.3],[-142,59.9],[-140,59.7],[-137.5,59.3],[-135.5,57],[-133.4,55.7],[-132,54.8],[-130.5,54.2],[-128.5,52.2],[-126.8,50.6],[-124.7,49],[-124.2,47.6],[-124.5,46.3],[-124.1,44.6],[-124.5,42.8],[-124.2,40.6],[-124,38],[-122.5,37.2],[-121.3,35.8],[-120.4,34.8],[-117.3,32.5],[-117.1,32.5],[-116,31],[-114.8,29.5],[-110,24],[-106.5,23],[-105.2,20.8],[-103.4,18.6],[-99.8,16.5],[-90.1,16],[-88,15.8],[-83.7,9.5],[-82.7,8.2],[-77.5,7.5]]
+};
+
+/* ═══════════════════════════════════
+   GROUP CONFIG
+═══════════════════════════════════ */
+const GROUPS={
+  stations:{ label:'SPACE STATIONS',   typeLabel:'Space Station / Crewed',          color:0x00e87a, hex:'#00e87a' },
+  weather: { label:'WEATHER',          typeLabel:'Meteorological Satellite',         color:0x00d4ff, hex:'#00d4ff' },
+  nav:     { label:'NAV / GNSS',       typeLabel:'Navigation / GNSS',               color:0xf5c842, hex:'#f5c842' },
+  starlink:{ label:'STARLINK',         typeLabel:'Commercial Broadband (SpaceX)',    color:0xf53d9e, hex:'#f53d9e' },
+  oneweb:  { label:'ONEWEB',           typeLabel:'Commercial Broadband (OneWeb)',    color:0x9b59f5, hex:'#9b59f5' },
+  science: { label:'SCIENCE / EO',     typeLabel:'Scientific / Earth Observation',  color:0xf57c20, hex:'#f57c20' },
+  debris:  { label:'DEBRIS',           typeLabel:'Space Debris / Rocket Body',      color:0xf53d3d, hex:'#f53d3d' },
+};
+
+function classifyOrbit(alt){
+  if(alt<2000)  return{label:'LEO',full:'Low Earth Orbit',    color:'#00e87a'};
+  if(alt<8000)  return{label:'MEO',full:'Medium Earth Orbit', color:'#f5c842'};
+  if(alt<40000) return{label:'GEO',full:'Geostationary Orbit',color:'#00d4ff'};
+  return              {label:'HEO',full:'High Earth Orbit',   color:'#f57c20'};
+}
+function parseIntdes(s){
+  if(!s||!s.trim())return{year:'—',launch:'—',piece:'—'};
+  s=s.trim();const yr2=parseInt(s.slice(0,2));
+  return{year:String(yr2>=57?1900+yr2:2000+yr2),launch:String(parseInt(s.slice(2,5))||'—'),piece:s.slice(5).trim()||'—'};
+}
+function epochFromSatrec(sr){
+  try{const y=sr.epochyr,yr=y<57?2000+y:1900+y;const d=new Date(Date.UTC(yr,0,1)+(sr.epochdays-1)*86400000);return d.toISOString().slice(0,10);}catch(e){return'—'}
+}
+
+/* ═══════════════════════════════════
+   THREE.JS
+═══════════════════════════════════ */
+const EARTH_R=6371;
+let scene,camera,renderer;
+let satellites=[],satSprites=[],orbitLines=[];
+let selectedSat=null,showOrbits=true;
+let activeGroups=new Set(['stations','weather','nav','starlink','science']);
+let searchQuery='';
+let isDragging=false,prevMouse={x:0,y:0};
+let sph={theta:.5,phi:1.15},tSph={theta:.5,phi:1.15};
+let zoom=3.8,tZoom=3.8;
+let autoRotate=true,lastInteract=0;
+const raycaster=new THREE.Raycaster();
+raycaster.params.Line={threshold:0.01};
+raycaster.params.Points={threshold:0.02};
+const mouse=new THREE.Vector2(-9,-9);
+
+function geoToVec3(lat,lon,altKm){
+  const r=1+altKm/EARTH_R;
+  const phi=(90-lat)*Math.PI/180;
+  const lam=lon*Math.PI/180;
+  return new THREE.Vector3(r*Math.sin(phi)*Math.sin(lam),r*Math.cos(phi),-r*Math.sin(phi)*Math.cos(lam));
+}
+
+
+/* ─── GROUND SITES: Mission Controls + Launch Sites ─── */
+const GROUND_SITES = [
+  // Launch Sites
+  {name:'Kennedy Space Center',    lat:28.57,  lon:-80.65,  type:'launch',  flag:'🚀'},
+  {name:'Cape Canaveral SFS',      lat:28.49,  lon:-80.58,  type:'launch',  flag:'🚀'},
+  {name:'Vandenberg SFB',          lat:34.74,  lon:-120.57, type:'launch',  flag:'🚀'},
+  {name:'Baikonur Cosmodrome',     lat:45.96,  lon:63.31,   type:'launch',  flag:'🚀'},
+  {name:'Plesetsk Cosmodrome',     lat:62.93,  lon:40.57,   type:'launch',  flag:'🚀'},
+  {name:'Jiuquan Launch Center',   lat:40.96,  lon:100.29,  type:'launch',  flag:'🚀'},
+  {name:'Xichang Launch Center',   lat:28.25,  lon:102.03,  type:'launch',  flag:'🚀'},
+  {name:'Wenchang Space Center',   lat:19.61,  lon:110.95,  type:'launch',  flag:'🚀'},
+  {name:'Tanegashima Space Center',lat:30.40,  lon:130.97,  type:'launch',  flag:'🚀'},
+  {name:'Satish Dhawan (ISRO)',    lat:13.73,  lon:80.24,   type:'launch',  flag:'🚀'},
+  {name:'Guiana Space Centre',     lat:5.24,   lon:-52.77,  type:'launch',  flag:'🚀'},
+  {name:'Mahia Launch Complex',    lat:-39.26, lon:177.86,  type:'launch',  flag:'🚀'},
+  {name:'Starbase (Boca Chica)',   lat:25.99,  lon:-97.16,  type:'launch',  flag:'🚀'},
+  // Mission Controls
+  {name:'JPL (NASA)',              lat:34.20,  lon:-118.17, type:'control', flag:'📡'},
+  {name:'Johnson Space Center',    lat:29.56,  lon:-95.09,  type:'control', flag:'📡'},
+  {name:'Goddard Space Flight Ctr',lat:39.00,  lon:-76.88,  type:'control', flag:'📡'},
+  {name:'ESA ESOC (Darmstadt)',    lat:49.87,  lon:8.62,    type:'control', flag:'📡'},
+  {name:'JAXA Tsukuba',            lat:36.11,  lon:140.09,  type:'control', flag:'📡'},
+  {name:'ISRO ISTRAC (Bangalore)', lat:13.02,  lon:77.57,   type:'control', flag:'📡'},
+  {name:'SpaceX HQ (Hawthorne)',   lat:33.92,  lon:-118.33, type:'control', flag:'📡'},
+  {name:'CNSA Beijing',            lat:39.91,  lon:116.39,  type:'control', flag:'📡'},
+  {name:'Roscosmos (Moscow)',      lat:55.76,  lon:37.62,   type:'control', flag:'📡'},
+];
+
+const groundMeshes = [];
+
+function addGroundSites(){
+  for(const site of GROUND_SITES){
+    const pos = geoToVec3(site.lat, site.lon, 0).multiplyScalar(1.005);
+
+    // Marker — small glowing sphere
+    const isLaunch = site.type === 'launch';
+    const col = isLaunch ? 0xffaa00 : 0x00d4ff;
+    const r   = isLaunch ? 0.007 : 0.006;
+
+    const mesh = new THREE.Mesh(
+      new THREE.SphereGeometry(r, 8, 8),
+      new THREE.MeshBasicMaterial({color: col})
+    );
+    mesh.position.copy(pos);
+    mesh.userData.site = site;
+    scene.add(mesh);
+    groundMeshes.push(mesh);
+
+    // Vertical spike
+    const spike = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.001, 0.001, isLaunch ? 0.04 : 0.03, 4),
+      new THREE.MeshBasicMaterial({color: col, transparent:true, opacity:0.6})
+    );
+    spike.position.copy(pos);
+    spike.lookAt(0,0,0);
+    spike.rotateX(Math.PI/2);
+    spike.translateY(-(isLaunch?0.02:0.015));
+    scene.add(spike);
+  }
+}
+
+function initScene(){
+  const wrap=document.getElementById('canvas-wrap');
+  scene=new THREE.Scene();
+  camera=new THREE.PerspectiveCamera(38,wrap.clientWidth/wrap.clientHeight,.01,1000);
+  renderer=new THREE.WebGLRenderer({canvas:document.getElementById('globe'),antialias:true,alpha:false});
+  renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+  renderer.setSize(wrap.clientWidth,wrap.clientHeight);
+  renderer.setClearColor(0x060a0d,1);
+  addStars();addGlobe();addGraticule();addCoastlines();
+  scene.add(new THREE.AmbientLight(0x334455,1.0));
+  const sun=new THREE.DirectionalLight(0x6699bb,0.8);sun.position.set(5,3,4);scene.add(sun);
+  window.addEventListener('resize',onResize);onResize();
+  addGroundSites();
+}
+
+function addStars(){
+  const N=6000,pos=new Float32Array(N*3);
+  for(let i=0;i<N*3;i+=3){
+    const r=90+Math.random()*20,th=Math.random()*Math.PI*2,ph=Math.acos(2*Math.random()-1);
+    pos[i]=r*Math.sin(ph)*Math.cos(th);pos[i+1]=r*Math.sin(ph)*Math.sin(th);pos[i+2]=r*Math.cos(ph);
+  }
+  const geo=new THREE.BufferGeometry();geo.setAttribute('position',new THREE.BufferAttribute(pos,3));
+  // Two sizes for depth
+  scene.add(new THREE.Points(geo,new THREE.PointsMaterial({color:0x8899aa,size:.08,transparent:true,opacity:.5})));
+  const geo2=new THREE.BufferGeometry();
+  const pos2=new Float32Array(500*3);
+  for(let i=0;i<500*3;i+=3){const r=88,th=Math.random()*Math.PI*2,ph=Math.acos(2*Math.random()-1);pos2[i]=r*Math.sin(ph)*Math.cos(th);pos2[i+1]=r*Math.sin(ph)*Math.sin(th);pos2[i+2]=r*Math.cos(ph);}
+  geo2.setAttribute('position',new THREE.BufferAttribute(pos2,3));
+  scene.add(new THREE.Points(geo2,new THREE.PointsMaterial({color:0xffffff,size:.18,transparent:true,opacity:.7})));
+}
+
+function addGlobe(){
+  // Dark ocean base
+  scene.add(new THREE.Mesh(new THREE.SphereGeometry(1,64,64),
+    new THREE.MeshPhongMaterial({color:0x060e18,emissive:0x030810,shininess:8})));
+  // Atmosphere rim
+  scene.add(new THREE.Mesh(new THREE.SphereGeometry(1.02,64,64),
+    new THREE.MeshBasicMaterial({color:0x0a2040,transparent:true,opacity:.08,side:THREE.BackSide})));
+  scene.add(new THREE.Mesh(new THREE.SphereGeometry(1.06,64,64),
+    new THREE.MeshBasicMaterial({color:0x001830,transparent:true,opacity:.04,side:THREE.BackSide})));
+}
+
+function addGraticule(){
+  const lm=new THREE.LineBasicMaterial({color:0x0d2035,transparent:true,opacity:.8});
+  const em=new THREE.LineBasicMaterial({color:0x102840,transparent:true,opacity:1});
+  const S=120,R=1.001;
+  for(let lat=-75;lat<=75;lat+=15){
+    const pts=[];for(let i=0;i<=S;i++)pts.push(geoToVec3(lat,(i/S)*360-180,0).multiplyScalar(R));
+    scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),lat===0?em:lm));
+  }
+  for(let lon=-180;lon<180;lon+=15){
+    const pts=[];for(let i=0;i<=S;i++)pts.push(geoToVec3(-90+(i/S)*180,lon,0).multiplyScalar(R));
+    scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),lm));
+  }
+}
+
+// Accurate continent outlines
+const COASTS=[
+[[-168,71.4],[-165,68.5],[-163.7,64.6],[-162,60.6],[-152,59.3],[-149,59.9],[-148.3,60.8],[-146.5,61.1],[-145,60.3],[-142,59.9],[-140,59.7],[-137.5,59.3],[-135.5,57],[-133.4,55.7],[-132,54.8],[-130.5,54.2],[-128.5,52.2],[-126.8,50.6],[-124.7,49],[-124.2,47.6],[-124.5,46.3],[-124.1,44.6],[-124.5,42.8],[-124.2,40.6],[-124,38],[-122.5,37.2],[-121.3,35.8],[-120.4,34.8],[-117.3,32.5],[-117.1,32.5],[-116,31],[-114.8,29.5],[-110,24],[-106.5,23],[-105.2,20.8],[-103.4,18.6],[-99.8,16.5],[-90.1,16],[-88,15.8],[-83.7,9.5],[-82.7,8.2],[-77.5,7.5]]
 };
 
 /* ═══════════════════════════════════
